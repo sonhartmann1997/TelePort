@@ -16,6 +16,7 @@
   let tvSyncD1SchemaReady = false;
   const tvSyncMemoryPairs = new Map();
   const tvSyncMemoryRooms = new Map();
+  const tvSyncPresenceLastCleanupMap = new Map();
   const tvPairApproveRateMap = new Map();
   const tvPairStartRateMap = new Map();
   const botCodeCreateRateMap = new Map();
@@ -478,12 +479,17 @@
     }
 
     if (path === "/" || path === "/app" || path === "/miniapp") {
-      let cachedEntry = cachedAppHtmlByOrigin.get(url.origin);
+      const isNativeApkUa = /TelePortAPK\//i.test(String(request.headers.get("User-Agent") || ""));
+      const variantKey = `${url.origin}|${isNativeApkUa ? "apk" : "web"}`;
+      let cachedEntry = cachedAppHtmlByOrigin.get(variantKey);
       if (!cachedEntry) {
-        const html = renderNetflixMiniAppHtml(url.origin);
+        let html = renderNetflixMiniAppHtml(url.origin);
+        if (isNativeApkUa) {
+          html = html.replace(/<script\b[^>]*src="https:\/\/telegram\.org\/js\/telegram-web-app\.js"[^>]*><\/script>\s*/i, "");
+        }
         cachedEntry = { html, etag: computeLightweightEtag(html) };
-        if (cachedAppHtmlByOrigin.size > 6) cachedAppHtmlByOrigin.clear();
-        cachedAppHtmlByOrigin.set(url.origin, cachedEntry);
+        if (cachedAppHtmlByOrigin.size > 12) cachedAppHtmlByOrigin.clear();
+        cachedAppHtmlByOrigin.set(variantKey, cachedEntry);
       }
       const ifNoneMatch = String(request.headers.get("If-None-Match") || "").trim();
       if (ifNoneMatch && ifNoneMatch === cachedEntry.etag) {
@@ -491,6 +497,7 @@
           status: 304,
           headers: {
             "ETag": cachedEntry.etag,
+            "Vary": "User-Agent",
             "Cache-Control": "public, max-age=60, stale-while-revalidate=300"
           }
         });
@@ -500,6 +507,7 @@
         headers: {
           "Content-Type": "text/html; charset=utf-8",
           "ETag": cachedEntry.etag,
+          "Vary": "User-Agent",
           "Cache-Control": "public, max-age=60, stale-while-revalidate=300"
         }
       });
@@ -608,11 +616,258 @@
       });
     }
 
+    if (path === "/api/tma/collections" && request.method === "GET" && !url.searchParams.get("id")) {
+      const colSearchQ = (url.searchParams.get("q") || "").trim();
+      if (!colSearchQ) {
+        return new Response(JSON.stringify({
+          ok: true,
+          collections: FEATURED_COLLECTIONS
+        }), { status: 200, headers: { ...corsHeaders, "Cache-Control": "public, max-age=3600" } });
+      }
+      const forceRefreshColQ = url.searchParams.get("refresh") === "1";
+      const edgeCacheColQ = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+      const qCacheKey = edgeCacheColQ
+        ? new Request(`${url.origin}/__edge_cache/api/tma/collections/q/v1?q=${encodeURIComponent(colSearchQ.toLowerCase())}`, { method: "GET" })
+        : null;
+      if (edgeCacheColQ && qCacheKey && !forceRefreshColQ) {
+        try {
+          const cachedQRes = await edgeCacheColQ.match(qCacheKey);
+          if (cachedQRes && cachedQRes.ok) {
+            const cachedQBody = await cachedQRes.text();
+            if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+            return new Response(cachedQBody, {
+              status: 200,
+              headers: { ...corsHeaders, "Cache-Control": "public, max-age=900", "X-Edge-Cache": "HIT" }
+            });
+          }
+        } catch (_e) {}
+      }
+      const found = await searchCollectionsTMDB(env, colSearchQ, 1);
+      const qResults = found?.results || [];
+      const qBodyStr = JSON.stringify({ ok: true, results: qResults });
+      if (edgeCacheColQ && qCacheKey && qResults.length > 0) {
+        const edgeQEntry = new Response(qBodyStr, {
+          status: 200,
+          headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=900" }
+        });
+        scheduleBackgroundWork(() => edgeCacheColQ.put(qCacheKey, edgeQEntry));
+      }
+      return new Response(qBodyStr, {
+        status: 200,
+        headers: { ...corsHeaders, "Cache-Control": "public, max-age=900", "X-Edge-Cache": "MISS" }
+      });
+    }
+
+    if (path === "/api/tma/universes" && request.method === "GET" && !url.searchParams.get("id")) {
+      return new Response(JSON.stringify({
+        ok: true,
+        universes: CINEMATIC_UNIVERSES
+      }), { status: 200, headers: { ...corsHeaders, "Cache-Control": "public, max-age=3600" } });
+    }
+
+    if (path === "/api/tma/translate" && (request.method === "POST" || request.method === "GET")) {
+      let textToTranslate = "";
+      let targetLang = "de";
+      if (request.method === "POST") {
+        const bodyObj = await request.json().catch(() => ({}));
+        textToTranslate = String(bodyObj.text || "").trim();
+        targetLang = String(bodyObj.targetLang || "de").trim() || "de";
+      } else {
+        textToTranslate = String(url.searchParams.get("text") || "").trim();
+        targetLang = String(url.searchParams.get("tl") || "de").trim() || "de";
+      }
+      if (!textToTranslate) {
+        return new Response(JSON.stringify({ ok: false, error: "Kein Text übergeben." }), { status: 400, headers: corsHeaders });
+      }
+      if (!/^[a-z]{2}(?:-[A-Za-z]{2})?$/.test(targetLang)) {
+        targetLang = "de";
+      }
+      const clippedText = textToTranslate.slice(0, 1800);
+      const trHash = computeLightweightEtag(`${targetLang}|${clippedText}`).replace(/[^a-zA-Z0-9_-]/g, "");
+      const cacheKey = `tr_${targetLang}_${trHash}`;
+      if (typeof memoryFallback !== "undefined" && memoryFallback && memoryFallback.has(cacheKey)) {
+        return new Response(JSON.stringify({ ok: true, translatedText: memoryFallback.get(cacheKey), cached: true }), { status: 200, headers: corsHeaders });
+      }
+      const edgeCacheTr = (typeof caches !== "undefined" && caches?.default) ? caches.default : null;
+      const trCacheReq = edgeCacheTr
+        ? new Request(`${url.origin}/__edge_cache/api/tma/translate/v1?tl=${encodeURIComponent(targetLang)}&h=${encodeURIComponent(trHash)}`, { method: "GET" })
+        : null;
+      const putTrMemCapped = (k, val) => {
+        if (typeof memoryFallback === "undefined" || !memoryFallback) return;
+        if (!memoryFallback.has(k)) {
+          let trCount = 0;
+          const oldestTrKeys = [];
+          for (const mk of memoryFallback.keys()) {
+            if (String(mk).startsWith("tr_")) {
+              trCount++;
+              if (oldestTrKeys.length < 40) oldestTrKeys.push(mk);
+            }
+          }
+          if (trCount >= 200) {
+            for (const dk of oldestTrKeys) memoryFallback.delete(dk);
+          }
+        }
+        memoryFallback.set(k, val);
+      };
+      if (edgeCacheTr && trCacheReq) {
+        try {
+          const hitTr = await edgeCacheTr.match(trCacheReq);
+          if (hitTr) {
+            const hitJson = await hitTr.json().catch(() => null);
+            if (hitJson?.translatedText) {
+              putTrMemCapped(cacheKey, hitJson.translatedText);
+              return new Response(JSON.stringify({ ok: true, translatedText: hitJson.translatedText, cached: true }), { status: 200, headers: corsHeaders });
+            }
+          }
+        } catch (_e) {}
+      }
+      const trRate = checkInMemoryIpRateLimit(translateIpRateMap, request, 20, 60000);
+      if (trRate.blocked) {
+        return new Response(JSON.stringify({ ok: false, error: `Zu viele Übersetzungsanfragen. Bitte warte ${trRate.waitSec} Sekunden.` }), {
+          status: 429,
+          headers: { ...corsHeaders, "Retry-After": String(trRate.waitSec) }
+        });
+      }
+      let translatedText = "";
+      try {
+        if (typeof translator === "function") {
+          const trRes = await translator(clippedText, targetLang);
+          if (trRes && trRes !== "Keine Beschreibung verfügbar." && trRes.toLowerCase() !== clippedText.toLowerCase()) {
+            translatedText = trRes;
+          }
+        }
+      } catch (_tErr) {}
+      if (!translatedText) {
+        try {
+          const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(clippedText)}`;
+          const gRes = await fetchWithTimeout(gUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+              "Accept": "application/json, text/plain, */*"
+            }
+          }, 3800);
+          if (gRes.ok) {
+            const gData = await gRes.json();
+            if (Array.isArray(gData) && Array.isArray(gData[0])) {
+              translatedText = gData[0].map(part => (Array.isArray(part) && part[0] ? String(part[0]) : "")).join("").trim();
+            }
+          }
+        } catch (_err) {}
+      }
+      if (!translatedText) {
+        try {
+          const mUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clippedText.slice(0, 490))}&langpair=en|${encodeURIComponent(targetLang)}`;
+          const mRes = await fetchWithTimeout(mUrl, {}, 3800);
+          if (mRes.ok) {
+            const mData = await mRes.json();
+            if (mData?.responseData?.translatedText) {
+              translatedText = String(mData.responseData.translatedText).trim();
+            }
+          }
+        } catch (_err2) {}
+      }
+      if (translatedText) {
+        putTrMemCapped(cacheKey, translatedText);
+        const payloadStr = JSON.stringify({ ok: true, translatedText });
+        if (edgeCacheTr && trCacheReq && typeof scheduleBackgroundWork === "function") {
+          const cacheableTrRes = new Response(payloadStr, {
+            status: 200,
+            headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=604800" }
+          });
+          scheduleBackgroundWork(() => edgeCacheTr.put(trCacheReq, cacheableTrRes));
+        }
+        return new Response(payloadStr, {
+          status: 200,
+          headers: { ...corsHeaders, "Cache-Control": "public, max-age=604800" }
+        });
+      }
+      return new Response(JSON.stringify({ ok: false, error: "Übersetzungsdienst vorübergehend nicht erreichbar." }), { status: 502, headers: corsHeaders });
+    }
+
+    if (path === "/api/tma/episode-story" && request.method === "POST") {
+      try {
+        const epRate = checkInMemoryIpRateLimit(episodeStoryIpRateMap, request, 15, 60000);
+        if (epRate.blocked) {
+          return new Response(JSON.stringify({ ok: false, error: `Zu viele Anfragen. Bitte warte ${epRate.waitSec} Sekunden.` }), {
+            status: 429,
+            headers: { ...corsHeaders, "Retry-After": String(epRate.waitSec) }
+          });
+        }
+        const body = await request.json().catch(() => ({}));
+        const seriesIdNum = parseInt(String(body.seriesId || "0"), 10);
+        const seasonNum = parseInt(String(body.season ?? "1"), 10);
+        const episodeNum = parseInt(String(body.episode || "0"), 10);
+        if (!Number.isFinite(seriesIdNum) || seriesIdNum <= 0 || !Number.isFinite(seasonNum) || seasonNum < 0 || !Number.isFinite(episodeNum) || episodeNum <= 0) {
+          return new Response(JSON.stringify({ ok: false, error: "Ungültige Serien-, Staffel- oder Episodennummer." }), { status: 400, headers: corsHeaders });
+        }
+        const edgeCacheEp = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+        const epStoryEdgeKey = edgeCacheEp
+          ? new Request(`${url.origin}/__edge_cache/api/tma/episode-story/v1?seriesId=${seriesIdNum}&season=${seasonNum}&episode=${episodeNum}`, { method: "GET" })
+          : null;
+        if (edgeCacheEp && epStoryEdgeKey) {
+          try {
+            const cachedEpRes = await edgeCacheEp.match(epStoryEdgeKey);
+            if (cachedEpRes && cachedEpRes.ok) {
+              if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+              return new Response(cachedEpRes.body, { status: 200, headers: corsHeaders });
+            }
+          } catch (_e) {}
+        }
+        const [sDetails, seasonData] = await Promise.all([
+          fetchSeriesDetails(env, seriesIdNum),
+          fetchSeasonDetails(env, seriesIdNum, seasonNum)
+        ]);
+        const matchedEp = (seasonData?.episodes || []).find(e => Number(e.episode_number) === episodeNum) || null;
+        const epObj = matchedEp || {
+          episode_number: episodeNum,
+          season_number: seasonNum,
+          name: `Folge ${episodeNum}`
+        };
+        const telegraphUrl = (sDetails?.id && matchedEp)
+          ? await ensureEpisodeTelegraphUrl(env, seriesIdNum, sDetails, seasonNum, matchedEp)
+          : "";
+        const epPayloadStr = JSON.stringify({
+          ok: true,
+          telegraphUrl,
+          episode: {
+            episode_number: Number(epObj.episode_number || episodeNum),
+            season_number: Number(epObj.season_number || seasonNum),
+            name: epObj.name || `Folge ${episodeNum}`,
+            overview: epObj.overview || "",
+            air_date: epObj.air_date || "",
+            still_path: epObj.still_path || "",
+            vote_average: Number(epObj.vote_average || 0),
+            runtime: parseInt(String(epObj.runtime || ""), 10) || 0
+          }
+        });
+        if (edgeCacheEp && epStoryEdgeKey && (matchedEp || telegraphUrl)) {
+          const epCacheEntry = new Response(epPayloadStr, {
+            status: 200,
+            headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=21600" }
+          });
+          scheduleBackgroundWork(() => edgeCacheEp.put(epStoryEdgeKey, epCacheEntry));
+        }
+        return new Response(epPayloadStr, { status: 200, headers: corsHeaders });
+      } catch (_epErr) {
+        return new Response(JSON.stringify({ ok: false, error: "Episoden-Story konnte nicht geladen werden." }), { status: 500, headers: corsHeaders });
+      }
+    }
+
     try {
       // Zentrale Sicherheits- & Auth-Weiche:
       // chatId stammt NIEMALS aus URL-Parametern (?chatId=...), sondern ausschließlich
       // aus kryptografisch verifiziertem Telegram initData oder einem signierten Account-Session-Token!
-      const auth = await resolveTmaAuthContext(request, env);
+      const skipPreResolveAuth = request.method === "POST" && (
+        path === "/api/tma/auth/init" ||
+        path === "/api/tma/auth/telegram-widget" ||
+        path === "/api/tma/auth/bot-code" ||
+        path === "/api/tma/auth/login" ||
+        path === "/api/tma/auth/tv-pair/start" ||
+        path === "/api/tma/auth/tv-pair/poll"
+      );
+      const auth = skipPreResolveAuth
+        ? { isAuthenticated: false, isGuest: true, authMethod: "guest", hasInitData: false, chatId: "guest", user: null, authFailureReason: null }
+        : await resolveTmaAuthContext(request, env);
       const chatId = auth.isAuthenticated ? auth.chatId : "guest";
       // VIP-Zugriffsweiche: Qualitäten & Streams werden serverseitig ausschließlich für VIP-Mitglieder (oder Admins) ausgeliefert!
       const hasVipStreamAccess = Boolean(auth.isAuthenticated && (auth.user?.isVip || auth.user?.isAdmin));
@@ -726,24 +981,33 @@
       } catch (e) {}
       const isLocalSandboxRuntime = typeof window !== "undefined" && typeof document !== "undefined";
       const guestMemSettings = isLocalSandboxRuntime ? (memoryFallback.get("settings_guest") || {}) : {};
-      const needsUserSettingsRead =
-        path === "/api/tma/discover" ||
+      const hasClientHeaderSettings = Boolean(clientHeaderSettings && typeof clientHeaderSettings === "object");
+      const discoverPageNum = path === "/api/tma/discover" ? Math.max(1, Number(url.searchParams.get("page") || 1)) : 1;
+      const skipDiscoverSettings = path === "/api/tma/discover" && url.searchParams.get("skipSettings") === "1" && hasClientHeaderSettings;
+      const isReadOnlyFilterEndpoint =
         path === "/api/tma/search" ||
         path === "/api/tma/collections" ||
         path === "/api/tma/universes" ||
         path === "/api/tma/similar" ||
+        (path === "/api/tma/discover" && (discoverPageNum > 1 || skipDiscoverSettings));
+      const needsUserSettingsRead =
+        (path === "/api/tma/discover" && (!hasClientHeaderSettings || (discoverPageNum <= 1 && !skipDiscoverSettings))) ||
+        (isReadOnlyFilterEndpoint && !hasClientHeaderSettings) ||
         path === "/api/tma/stream" ||
         path === "/api/tma/stream-batch" ||
         (path === "/api/tma/wishlist" && request.method === "POST") ||
         (path === "/api/tma/activity-log" && request.method === "POST") ||
         (path === "/api/tma/settings" && request.method === "GET");
+      const defaultBaseSettings = (typeof DEFAULT_USER_SETTINGS_TEMPLATE === "object" && DEFAULT_USER_SETTINGS_TEMPLATE)
+        ? { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...guestMemSettings }
+        : { filtersActive: true, showUnreleased: false, ...guestMemSettings };
       const baseUserSettings = (auth.isAuthenticated && needsUserSettingsRead)
         ? await getUserSettings(env, chatId)
-        : { filtersActive: true, showUnreleased: false, ...guestMemSettings };
-      const settings = (clientHeaderSettings && typeof clientHeaderSettings === "object")
+        : defaultBaseSettings;
+      const settings = hasClientHeaderSettings
         ? { ...baseUserSettings, ...clientHeaderSettings }
         : baseUserSettings;
-      if (clientHeaderSettings && typeof clientHeaderSettings === "object" && path === "/api/tma/discover") {
+      if (hasClientHeaderSettings && path === "/api/tma/discover" && discoverPageNum <= 1 && !skipDiscoverSettings) {
         // Key-reihenfolge-unabhängiger Vergleich (verhindert blinde Writes bei jedem Discover-Aufruf!)
         const cmpSer = typeof stableJsonStringify === "function" ? stableJsonStringify : JSON.stringify;
         const settingsChanged = cmpSer(settings) !== cmpSer(baseUserSettings);
@@ -1367,7 +1631,7 @@
         let code = generateCryptoDigits(6);
         let inserted = false;
         if (tvDb) {
-          await tvDb.prepare("DELETE FROM tma_tv_login_pairs WHERE expires_at <= ?").bind(now).run().catch(() => {});
+          scheduleBackgroundWork(() => tvDb.prepare("DELETE FROM tma_tv_login_pairs WHERE expires_at <= ?").bind(now).run().catch(() => {}));
           for (let attempt = 0; attempt < 4; attempt++) {
             try {
               await tvDb.prepare(
@@ -1566,12 +1830,23 @@
             const expiresAt = now + 240000;
             const payloadStr = JSON.stringify({ platform, allowRemote: true });
             if (tvDb) {
-              await tvDb.batch([
-                tvDb.prepare("DELETE FROM tma_tv_sync_rooms WHERE telegram_id = ? AND expires_at <= ?").bind(ownerId, now),
-                tvDb.prepare(
-                  "INSERT INTO tma_tv_sync_rooms (room_key, telegram_id, kind, device_id, device_label, payload_json, seq, updated_at, expires_at) VALUES (?, ?, 'presence', ?, ?, ?, 0, ?, ?) ON CONFLICT(room_key) DO UPDATE SET device_label = excluded.device_label, payload_json = excluded.payload_json, updated_at = excluded.updated_at, expires_at = excluded.expires_at"
-                ).bind(roomKey, ownerId, deviceId, deviceLabel, payloadStr, now, expiresAt)
-              ]);
+              const lastCleanupAt = tvSyncPresenceLastCleanupMap.get(ownerId) || 0;
+              const shouldCleanupExpired = (now - lastCleanupAt) >= 600000;
+              const upsertStmt = tvDb.prepare(
+                "INSERT INTO tma_tv_sync_rooms (room_key, telegram_id, kind, device_id, device_label, payload_json, seq, updated_at, expires_at) VALUES (?, ?, 'presence', ?, ?, ?, 0, ?, ?) ON CONFLICT(room_key) DO UPDATE SET device_label = excluded.device_label, payload_json = excluded.payload_json, updated_at = excluded.updated_at, expires_at = excluded.expires_at"
+              ).bind(roomKey, ownerId, deviceId, deviceLabel, payloadStr, now, expiresAt);
+              if (shouldCleanupExpired) {
+                if (tvSyncPresenceLastCleanupMap.size > 256) {
+                  tvSyncPresenceLastCleanupMap.clear();
+                }
+                tvSyncPresenceLastCleanupMap.set(ownerId, now);
+                await tvDb.batch([
+                  tvDb.prepare("DELETE FROM tma_tv_sync_rooms WHERE telegram_id = ? AND expires_at <= ?").bind(ownerId, now),
+                  upsertStmt
+                ]);
+              } else {
+                await upsertStmt.run();
+              }
             } else {
               tvSyncMemoryRooms.set(roomKey, { room_key: roomKey, telegram_id: ownerId, kind: "presence", device_id: deviceId, device_label: deviceLabel, payload_json: payloadStr, seq: 0, updated_at: now, expires_at: expiresAt });
             }
@@ -4795,18 +5070,21 @@
             ? [visibleItems[Math.floor(Math.random() * visibleItems.length)]]
             : visibleItems;
 
-          // Seite 1: Gecachte ClearLogos & Beschreibungen gebündelt aus RAM + D1-Batch anreichern; max. 3 fehlende Overviews per TMDb
+          // Seite 1: Gecachte ClearLogos, Beschreibungen & Bot-Username parallel aus RAM + D1-Batch anreichern; max. 3 fehlende Overviews per TMDb
+          let resolvedBotUsername = "";
           if (page === 1 && Array.isArray(items) && items.length > 0) {
             const topCandidates = items.slice(0, 14);
             const missingOvCandidates = topCandidates.filter(it => it && it.id && (!it.overview || !String(it.overview).trim()));
-            const [d1LogosMap, d1MetaMap] = await Promise.all([
+            const [d1LogosMap, d1MetaMap, botUserParallel] = await Promise.all([
               typeof getClearLogosBatchFromD1 === "function"
                 ? getClearLogosBatchFromD1(env, topCandidates, typeCode).catch(() => new Map())
                 : Promise.resolve(new Map()),
               (missingOvCandidates.length > 0 && typeof getMediaMetaBatchFromD1 === "function")
                 ? getMediaMetaBatchFromD1(env, missingOvCandidates, typeCode).catch(() => new Map())
-                : Promise.resolve(new Map())
+                : Promise.resolve(new Map()),
+              tgApi(env).getBotUsername(env).catch(() => "")
             ]);
+            resolvedBotUsername = botUserParallel || "";
             for (const it of topCandidates) {
               if (!it || !it.id) continue;
               const isSer = it.media_type === "tv" || typeCode === "s";
@@ -4839,6 +5117,8 @@
                 new Promise(resolve => setTimeout(resolve, 900))
               ]);
             }
+          } else if (page === 1) {
+            resolvedBotUsername = await tgApi(env).getBotUsername(env).catch(() => "");
           }
 
           const rawTotalPages = mode === "random" ? 1 : Math.max(1, Number(lookahead.total_pages || 1));
@@ -4848,7 +5128,6 @@
           const totalResults = mode === "random"
             ? items.length
             : Math.max(items.length, Number(lookahead.total_results || items.length));
-          const resolvedBotUsername = page === 1 ? await tgApi(env).getBotUsername(env) : "";
 
           catalogPayload = {
             items,
@@ -4876,17 +5155,28 @@
         // Seite > 1 (Infinite Scroll / Folgeseiten): spart getSavedList (D1/KV), getBotUsername sowie redundante genres/genreEmojis/settings
         let responseBody;
         if (page === 1) {
+          const skipSavedDiscover = url.searchParams.get("skipSaved") === "1";
+          const skipSettingsDiscover = url.searchParams.get("skipSettings") === "1" && hasClientHeaderSettings;
           const [botUsername, savedList] = await Promise.all([
             catalogPayload.botUsername ? Promise.resolve(catalogPayload.botUsername) : tgApi(env).getBotUsername(env),
-            auth.isAuthenticated ? getSavedList(env, chatId) : Promise.resolve([])
+            (auth.isAuthenticated && !skipSavedDiscover) ? getSavedList(env, chatId) : Promise.resolve(null)
           ]);
-          const savedKeys = (savedList || [])
-            .filter(i => (i.contentType === "movie" || i.contentType === "series") && i.tmdbId)
-            .map(i => (i.contentType === "series" ? "s_" : "m_") + i.tmdbId);
+          let savedKeys = null;
+          if (Array.isArray(savedList)) {
+            savedKeys = [];
+            for (const i of savedList) {
+              if (!i) continue;
+              if ((i.contentType === "movie" || i.contentType === "series") && i.tmdbId) {
+                savedKeys.push((i.contentType === "series" ? "s_" : "m_") + i.tmdbId);
+              } else if (i.contentType === "episode" && i.seriesId != null && i.seasonNumber != null && i.episodeNumber != null) {
+                savedKeys.push(`ep_${i.seriesId}_${Number(i.seasonNumber)}_${Number(i.episodeNumber)}`);
+              }
+            }
+          }
           responseBody = {
             ok: true,
             botUsername,
-            savedKeys,
+            ...(savedKeys !== null ? { savedKeys } : { savedSkipped: true }),
             typeCode,
             genreId,
             mode,
@@ -4899,7 +5189,7 @@
             filteredOutCount: catalogPayload.filteredOutCount,
             genres: typeCode === "m" ? MOVIE_GENRES : SERIES_GENRES,
             genreEmojis: GENRE_EMOJIS,
-            settings: sanitizeSettingsForClient(settings),
+            ...(!skipSettingsDiscover ? { settings: sanitizeSettingsForClient(settings) } : { settingsSkipped: true }),
             items: catalogPayload.items
           };
         } else {
@@ -4928,125 +5218,6 @@
             "X-Discover-Edge-Cache": edgeCacheHit ? "HIT" : "MISS"
           }
         });
-      }
-
-      if (path === "/api/tma/translate" && (request.method === "POST" || request.method === "GET")) {
-        let textToTranslate = "";
-        let targetLang = "de";
-        if (request.method === "POST") {
-          const bodyObj = await request.json().catch(() => ({}));
-          textToTranslate = String(bodyObj.text || "").trim();
-          targetLang = String(bodyObj.targetLang || "de").trim() || "de";
-        } else {
-          textToTranslate = String(url.searchParams.get("text") || "").trim();
-          targetLang = String(url.searchParams.get("tl") || "de").trim() || "de";
-        }
-        if (!textToTranslate) {
-          return new Response(JSON.stringify({ ok: false, error: "Kein Text übergeben." }), { status: 400, headers: corsHeaders });
-        }
-        if (!/^[a-z]{2}(?:-[A-Za-z]{2})?$/.test(targetLang)) {
-          targetLang = "de";
-        }
-        const clippedText = textToTranslate.slice(0, 1800);
-        const trHash = computeLightweightEtag(`${targetLang}|${clippedText}`).replace(/[^a-zA-Z0-9_-]/g, "");
-        const cacheKey = `tr_${targetLang}_${trHash}`;
-        if (typeof memoryFallback !== "undefined" && memoryFallback && memoryFallback.has(cacheKey)) {
-          return new Response(JSON.stringify({ ok: true, translatedText: memoryFallback.get(cacheKey), cached: true }), { status: 200, headers: corsHeaders });
-        }
-        const edgeCacheTr = (typeof caches !== "undefined" && caches?.default) ? caches.default : null;
-        const trCacheReq = edgeCacheTr
-          ? new Request(`${url.origin}/__edge_cache/api/tma/translate/v1?tl=${encodeURIComponent(targetLang)}&h=${encodeURIComponent(trHash)}`, { method: "GET" })
-          : null;
-        const putTrMemCapped = (k, val) => {
-          if (typeof memoryFallback === "undefined" || !memoryFallback) return;
-          if (!memoryFallback.has(k)) {
-            let trCount = 0;
-            const oldestTrKeys = [];
-            for (const mk of memoryFallback.keys()) {
-              if (String(mk).startsWith("tr_")) {
-                trCount++;
-                if (oldestTrKeys.length < 40) oldestTrKeys.push(mk);
-              }
-            }
-            if (trCount >= 200) {
-              for (const dk of oldestTrKeys) memoryFallback.delete(dk);
-            }
-          }
-          memoryFallback.set(k, val);
-        };
-        if (edgeCacheTr && trCacheReq) {
-          try {
-            const hitTr = await edgeCacheTr.match(trCacheReq);
-            if (hitTr) {
-              const hitJson = await hitTr.json().catch(() => null);
-              if (hitJson?.translatedText) {
-                putTrMemCapped(cacheKey, hitJson.translatedText);
-                return new Response(JSON.stringify({ ok: true, translatedText: hitJson.translatedText, cached: true }), { status: 200, headers: corsHeaders });
-              }
-            }
-          } catch (_e) {}
-        }
-        const trRate = checkInMemoryIpRateLimit(translateIpRateMap, request, 20, 60000);
-        if (trRate.blocked) {
-          return new Response(JSON.stringify({ ok: false, error: `Zu viele Übersetzungsanfragen. Bitte warte ${trRate.waitSec} Sekunden.` }), {
-            status: 429,
-            headers: { ...corsHeaders, "Retry-After": String(trRate.waitSec) }
-          });
-        }
-        let translatedText = "";
-        try {
-          if (typeof translator === "function") {
-            const trRes = await translator(clippedText, targetLang);
-            if (trRes && trRes !== "Keine Beschreibung verfügbar." && trRes.toLowerCase() !== clippedText.toLowerCase()) {
-              translatedText = trRes;
-            }
-          }
-        } catch (_tErr) {}
-        if (!translatedText) {
-          try {
-            const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(clippedText)}`;
-            const gRes = await fetchWithTimeout(gUrl, {
-              headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Accept": "application/json, text/plain, */*"
-              }
-            }, 3800);
-            if (gRes.ok) {
-              const gData = await gRes.json();
-              if (Array.isArray(gData) && Array.isArray(gData[0])) {
-                translatedText = gData[0].map(part => (Array.isArray(part) && part[0] ? String(part[0]) : "")).join("").trim();
-              }
-            }
-          } catch (_err) {}
-        }
-        if (!translatedText) {
-          try {
-            const mUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clippedText.slice(0, 490))}&langpair=en|${encodeURIComponent(targetLang)}`;
-            const mRes = await fetchWithTimeout(mUrl, {}, 3800);
-            if (mRes.ok) {
-              const mData = await mRes.json();
-              if (mData?.responseData?.translatedText) {
-                translatedText = String(mData.responseData.translatedText).trim();
-              }
-            }
-          } catch (_err2) {}
-        }
-        if (translatedText) {
-          putTrMemCapped(cacheKey, translatedText);
-          const payloadStr = JSON.stringify({ ok: true, translatedText });
-          if (edgeCacheTr && trCacheReq && typeof scheduleBackgroundWork === "function") {
-            const cacheableTrRes = new Response(payloadStr, {
-              status: 200,
-              headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=604800" }
-            });
-            scheduleBackgroundWork(() => edgeCacheTr.put(trCacheReq, cacheableTrRes));
-          }
-          return new Response(payloadStr, {
-            status: 200,
-            headers: { ...corsHeaders, "Cache-Control": "public, max-age=604800" }
-          });
-        }
-        return new Response(JSON.stringify({ ok: false, error: "Übersetzungsdienst vorübergehend nicht erreichbar." }), { status: 502, headers: corsHeaders });
       }
 
       if (path === "/api/tma/collections" && request.method === "GET") {
@@ -5108,38 +5279,6 @@
               "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=300",
               "X-Edge-Cache": "MISS"
             }
-          });
-        }
-        if (q) {
-          const qCacheKey = edgeCacheCol
-            ? new Request(`${url.origin}/__edge_cache/api/tma/collections/q/v1?q=${encodeURIComponent(q.toLowerCase())}`, { method: "GET" })
-            : null;
-          if (edgeCacheCol && qCacheKey && !forceRefresh) {
-            try {
-              const cachedQRes = await edgeCacheCol.match(qCacheKey);
-              if (cachedQRes && cachedQRes.ok) {
-                const cachedQBody = await cachedQRes.text();
-                if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
-                return new Response(cachedQBody, {
-                  status: 200,
-                  headers: { ...corsHeaders, "Cache-Control": "public, max-age=900", "X-Edge-Cache": "HIT" }
-                });
-              }
-            } catch (_e) {}
-          }
-          const found = await searchCollectionsTMDB(env, q, 1);
-          const qResults = found?.results || [];
-          const qBodyStr = JSON.stringify({ ok: true, results: qResults });
-          if (edgeCacheCol && qCacheKey && qResults.length > 0) {
-            const edgeQEntry = new Response(qBodyStr, {
-              status: 200,
-              headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=900" }
-            });
-            scheduleBackgroundWork(() => edgeCacheCol.put(qCacheKey, edgeQEntry));
-          }
-          return new Response(qBodyStr, {
-            status: 200,
-            headers: { ...corsHeaders, "Cache-Control": "public, max-age=900", "X-Edge-Cache": "MISS" }
           });
         }
         return new Response(JSON.stringify({
@@ -5224,12 +5363,38 @@
         const bypass = url.searchParams.get("bypass") === "1";
         const effectiveSettings = bypass ? { ...settings, filtersActive: false, showUnreleased: true, onlyVipStreams: false } : settings;
 
+        const edgeCacheSearch = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+        const searchFilterHash = buildCatalogEdgeFilterHash(effectiveSettings, hasVipStreamAccess);
+
         if (personIdParam) {
+          const personCacheKey = edgeCacheSearch
+            ? new Request(
+                `${url.origin}/__edge_cache/api/tma/search/person/v1?personId=${encodeURIComponent(personIdParam)}&sort=${encodeURIComponent(sortBy)}&bypass=${bypass ? 1 : 0}&vip=${hasVipStreamAccess ? 1 : 0}&fh=${encodeURIComponent(searchFilterHash)}`,
+                { method: "GET" }
+              )
+            : null;
+          if (edgeCacheSearch && personCacheKey) {
+            try {
+              const cachedPersonRes = await edgeCacheSearch.match(personCacheKey);
+              if (cachedPersonRes && cachedPersonRes.ok) {
+                const cachedPersonBody = await cachedPersonRes.text();
+                if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+                return new Response(cachedPersonBody, {
+                  status: 200,
+                  headers: {
+                    ...corsHeaders,
+                    "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=300",
+                    "X-Edge-Cache": "HIT"
+                  }
+                });
+              }
+            } catch (_e) {}
+          }
           const pData = await fetchPersonDetails(env, personIdParam);
           const rawCredits = pData?.credits || [];
           let { visibleItems } = await filterAndSortMediaList(env, rawCredits, effectiveSettings, sortBy, true);
           visibleItems = await applyVipStreamsOnlyFilterIfActive(env, visibleItems, "m", effectiveSettings, hasVipStreamAccess);
-          return new Response(JSON.stringify({
+          const personBodyStr = JSON.stringify({
             ok: true,
             query: pData?.name || q,
             personId: personIdParam,
@@ -5252,7 +5417,22 @@
               birthday: pData.birthday || "",
               place_of_birth: pData.place_of_birth || ""
             }] : []
-          }), { status: 200, headers: corsHeaders });
+          });
+          if (edgeCacheSearch && personCacheKey && pData) {
+            const edgePersonEntry = new Response(personBodyStr, {
+              status: 200,
+              headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=900" }
+            });
+            scheduleBackgroundWork(() => edgeCacheSearch.put(personCacheKey, edgePersonEntry));
+          }
+          return new Response(personBodyStr, {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=300",
+              "X-Edge-Cache": "MISS"
+            }
+          });
         }
 
         if (!q) {
@@ -5273,6 +5453,29 @@
         }
 
         const qLow = q.toLowerCase();
+        const searchCacheKey = edgeCacheSearch
+          ? new Request(
+              `${url.origin}/__edge_cache/api/tma/search/v1?q=${encodeURIComponent(qLow)}&scope=${encodeURIComponent(scope)}&sort=${encodeURIComponent(sortBy)}&page=${page}&bypass=${bypass ? 1 : 0}&vip=${hasVipStreamAccess ? 1 : 0}&fh=${encodeURIComponent(searchFilterHash)}`,
+              { method: "GET" }
+            )
+          : null;
+        if (edgeCacheSearch && searchCacheKey) {
+          try {
+            const cachedSearchRes = await edgeCacheSearch.match(searchCacheKey);
+            if (cachedSearchRes && cachedSearchRes.ok) {
+              const cachedSearchBody = await cachedSearchRes.text();
+              if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+              return new Response(cachedSearchBody, {
+                status: 200,
+                headers: {
+                  ...corsHeaders,
+                  "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=180",
+                  "X-Edge-Cache": "HIT"
+                }
+              });
+            }
+          } catch (_e) {}
+        }
         const strippedQueryForEntities = q.replace(/\(\s*(?:19\d{2}|20[0-3]\d)\s*\)/g, "").trim() || q;
         const qEntityLow = strippedQueryForEntities.toLowerCase();
 
@@ -5283,16 +5486,20 @@
           (String(u.description || u.desc || "").toLowerCase().includes(qEntityLow))
         ).slice(0, 5);
 
-        // 2. Passende Filmreihen, Personen & Filmstudios (Edge- & RAM-gecacht via cachedExternalFetchJson) parallel abrufen
+        // 2. Passende Filmreihen, Personen & Filmstudios nur für den angeforderten Scope abrufen (spart bis zu 3 TMDb-Subrequests!)
+        const needMainTmdbSearch = scope === "all" || scope === "movie" || scope === "series" || page > 1;
+        const needColSearch = page === 1 && (scope === "all" || scope === "collection") && hasSubrequestBudget(28);
+        const needPersonSearch = page === 1 && (scope === "all" || scope === "person") && hasSubrequestBudget(28);
+        const needCompanySearch = page === 1 && (scope === "all" || scope === "studio") && hasSubrequestBudget(28);
         const [searchData, colSearchData, multiRes, companyRes] = await Promise.all([
-          searchTMDBPage(env, q, settings, page, sortBy, bypass),
-          (page === 1 && hasSubrequestBudget(28)) ? searchCollectionsTMDB(env, strippedQueryForEntities, 1).catch(() => null) : Promise.resolve(null),
-          (page === 1 && hasSubrequestBudget(28)) ? cachedExternalFetchJson(
+          needMainTmdbSearch ? searchTMDBPage(env, q, settings, page, sortBy, bypass) : Promise.resolve(null),
+          needColSearch ? searchCollectionsTMDB(env, strippedQueryForEntities, 1).catch(() => null) : Promise.resolve(null),
+          needPersonSearch ? cachedExternalFetchJson(
             `https://api.themoviedb.org/3/search/person?query=${encodeURIComponent(strippedQueryForEntities)}&language=de-DE&page=1`,
             { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } },
             3200
           ).catch(() => null) : Promise.resolve(null),
-          (page === 1 && hasSubrequestBudget(28)) ? cachedExternalFetchJson(
+          needCompanySearch ? cachedExternalFetchJson(
             `https://api.themoviedb.org/3/search/company?query=${encodeURIComponent(strippedQueryForEntities)}&page=1`,
             { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } },
             3200
@@ -5417,7 +5624,7 @@
           ? visibleItems.length
           : Math.max(visibleItems.length, Number(searchData?.total_results || visibleItems.length));
 
-        return new Response(JSON.stringify({
+        const searchBodyStr = JSON.stringify({
           ok: true,
           query: q,
           scope,
@@ -5432,13 +5639,29 @@
           universes: page === 1 ? matchedUniverses : [],
           persons: matchedPersons,
           studios: matchedStudios
-        }), { status: 200, headers: corsHeaders });
+        });
+        if (edgeCacheSearch && searchCacheKey && (visibleItems.length > 0 || matchedCollections.length > 0 || matchedPersons.length > 0 || matchedStudios.length > 0)) {
+          const edgeSearchEntry = new Response(searchBodyStr, {
+            status: 200,
+            headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=300" }
+          });
+          scheduleBackgroundWork(() => edgeCacheSearch.put(searchCacheKey, edgeSearchEntry));
+        }
+        return new Response(searchBodyStr, {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=180",
+            "X-Edge-Cache": "MISS"
+          }
+        });
       }
 
       if (path === "/api/tma/details" && request.method === "GET") {
         const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
         const id = String(url.searchParams.get("id") || "").trim();
         const forceRefresh = url.searchParams.get("refresh") === "1";
+        const skipSavedRead = url.searchParams.get("skipSaved") === "1";
         if (!/^\d+$/.test(id)) {
           return new Response(JSON.stringify({ ok: false, error: "Ungültige Medien-ID." }), { status: 400, headers: corsHeaders });
         }
@@ -5470,9 +5693,16 @@
           } catch (_e) {}
         }
 
-        // Serien-D1-Abfrage dedupliziert: 1 einzige episode_files Abfrage liefert sowohl seasonCounts als auch allStreamFiles!
+        // Serien-D1-Abfrage dedupliziert + 45s Isolate-RAM-Cache: spart wiederholte D1-Vollauslesungen pro Serie!
         const fetchSeriesEpisodeFilesOnce = async (targetSeriesId) => {
           if (isMovie || !canSeeStreams || !targetSeriesId) return [];
+          const allEpCacheKey = `d1_all_ep_files_${targetSeriesId}`;
+          if (!forceRefresh && memoryFallback) {
+            const cachedPack = memoryFallback.get(allEpCacheKey);
+            if (cachedPack && Array.isArray(cachedPack.rows) && (Date.now() - Number(cachedPack.ts || 0)) < 45000) {
+              return cachedPack.rows;
+            }
+          }
           const db = await ensureD1Schema(env);
           if (db) {
             try {
@@ -5480,9 +5710,13 @@
                 .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, quality, codec, part, tags, version_label, file_size, raw_filename, raw_caption, message_link, updated_at FROM episode_files WHERE series_id = ?1 ORDER BY season_number ASC, episode_number ASC")
                 .bind(targetSeriesId)
                 .all();
-              if (Array.isArray(epFilesRes?.results) && epFilesRes.results.length > 0) {
-                return epFilesRes.results.map(enrichStreamFileRowMeta);
+              const enrichedRows = Array.isArray(epFilesRes?.results) && epFilesRes.results.length > 0
+                ? epFilesRes.results.map(enrichStreamFileRowMeta)
+                : [];
+              if (memoryFallback) {
+                memoryFallback.set(allEpCacheKey, { ts: Date.now(), rows: enrichedRows });
               }
+              return enrichedRows;
             } catch (_e) {}
           }
           if (memoryFallback) {
@@ -5507,7 +5741,7 @@
           // Edge-Cache-Treffer: 0 TMDb/YouTube/KinoCheck/ClearLogo-Subrequests – nur leichte Nutzer-/VIP-Daten nachladen!
           const targetId = detailsBase.id;
           [savedList, movieFiles, botUsername, seriesEpisodeFiles, mediaDownloads] = await Promise.all([
-            auth.isAuthenticated ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
+            (auth.isAuthenticated && !skipSavedRead) ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
             (isMovie && canSeeStreams) ? getMovieFilesFromD1(env, targetId).catch(() => []) : Promise.resolve([]),
             detailsBase.botUsername ? Promise.resolve(detailsBase.botUsername) : tgApi(env).getBotUsername(env).catch(() => ""),
             fetchSeriesEpisodeFilesOnce(targetId),
@@ -5533,7 +5767,7 @@
           let resolvedLogoPath = "";
           let resolvedTrailersPack = null;
           [savedList, movieFiles, botUsername, seriesEpisodeFiles, mediaDownloads, resolvedLogoPath, resolvedTrailersPack] = await Promise.all([
-            auth.isAuthenticated ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
+            (auth.isAuthenticated && !skipSavedRead) ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
             (isMovie && canSeeStreams) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
             tgApi(env).getBotUsername(env).catch(() => ""),
             fetchSeriesEpisodeFilesOnce(details.id),
@@ -5734,6 +5968,7 @@
           telegraphUrl: detailsBase.telegraphUrl,
           tmdbDeUrl: `https://www.themoviedb.org/${isMovie ? "movie" : "tv"}/${detailsBase.id}?language=de-DE`,
           isSaved,
+          savedSkipped: Boolean(skipSavedRead),
           hasTrailer: detailsBase.hasTrailer,
           trailerSource: detailsBase.trailerSource,
           trailers: detailsBase.trailers,
@@ -5755,11 +5990,41 @@
 
       if (path === "/api/tma/similar" && request.method === "GET") {
         const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
-        const id = url.searchParams.get("id") || "";
+        const id = String(url.searchParams.get("id") || "").trim();
         const sortBy = url.searchParams.get("sort") || "pop_desc";
         const forceOnlyVip = url.searchParams.get("onlyVip") === "1" || Boolean(settings?.onlyVipStreams);
+        const forceRefresh = url.searchParams.get("refresh") === "1";
         if (!id) {
           return new Response(JSON.stringify({ ok: false, error: "Keine ID angegeben" }), { status: 400, headers: corsHeaders });
+        }
+        const simEdgeCache = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+        const simFilterHash = typeof buildCatalogEdgeFilterHash === "function"
+          ? buildCatalogEdgeFilterHash(settings, hasVipStreamAccess)
+          : "default";
+        const simVipBit = hasVipStreamAccess ? "1" : "0";
+        const simOnlyVipBit = (forceOnlyVip && hasVipStreamAccess) ? "1" : "0";
+        const simEdgeKey = simEdgeCache
+          ? new Request(
+              `${url.origin}/__edge_cache/api/tma/similar/v1?type=${typeCode}&id=${encodeURIComponent(id)}&sort=${encodeURIComponent(sortBy)}&ov=${simOnlyVipBit}&vip=${simVipBit}&fh=${encodeURIComponent(simFilterHash)}`,
+              { method: "GET" }
+            )
+          : null;
+        if (simEdgeCache && simEdgeKey && !forceRefresh) {
+          try {
+            const cachedSimRes = await simEdgeCache.match(simEdgeKey);
+            if (cachedSimRes && cachedSimRes.ok) {
+              if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+              const cachedSimText = await cachedSimRes.text();
+              return new Response(cachedSimText, {
+                status: 200,
+                headers: {
+                  ...corsHeaders,
+                  "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=300",
+                  "X-Similar-Edge-Cache": "HIT"
+                }
+              });
+            }
+          } catch (_e) {}
         }
         const simData = await fetchSimilarMedia(env, typeCode, id, 1);
         const rawItems = simData?.results || [];
@@ -5789,13 +6054,28 @@
             } catch (e) {}
           }
         }
-        return new Response(JSON.stringify({
+        const simPayloadJson = JSON.stringify({
           ok: true,
           typeCode,
           id,
           onlyVipFiltered: Boolean(forceOnlyVip && hasVipStreamAccess),
           items: visibleItems
-        }), { status: 200, headers: corsHeaders });
+        });
+        if (simEdgeCache && simEdgeKey && visibleItems.length > 0) {
+          const edgeSimEntry = new Response(simPayloadJson, {
+            status: 200,
+            headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=900" }
+          });
+          scheduleBackgroundWork(() => simEdgeCache.put(simEdgeKey, edgeSimEntry));
+        }
+        return new Response(simPayloadJson, {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=300",
+            "X-Similar-Edge-Cache": "MISS"
+          }
+        });
       }
 
       if (path === "/api/tma/share-in-bot" && request.method === "POST") {
@@ -5950,7 +6230,7 @@
           reasonLabel,
           note: body.note || ""
         });
-        await notifyAdminsOnTelegramForReport(env, savedReport);
+        scheduleBackgroundWork(() => notifyAdminsOnTelegramForReport(env, savedReport));
         return new Response(JSON.stringify({ ok: true, report: savedReport }), { status: 200, headers: corsHeaders });
       }
 
@@ -5958,6 +6238,7 @@
         const seriesId = String(url.searchParams.get("seriesId") || "").trim();
         const seasonNum = parseInt(String(url.searchParams.get("season") || "1"), 10);
         const forceRefresh = url.searchParams.get("refresh") === "1";
+        const skipSavedRead = url.searchParams.get("skipSaved") === "1";
         if (!/^\d+$/.test(seriesId) || !Number.isFinite(seasonNum) || seasonNum < 0) {
           return new Response(JSON.stringify({ ok: false, error: "Ungültige Serien- oder Staffelnummer." }), { status: 400, headers: corsHeaders });
         }
@@ -6000,16 +6281,17 @@
             isEpisodeGroup: Boolean(seasonBase.isEpisodeGroup),
             episodes: seasonBase.episodes || []
           };
+          const needD1SeasonMeta = hasVipStreamAccess || !Array.isArray(seasonBase.episodes) || seasonBase.episodes.length === 0;
           [savedList, seasonFiles, d1SeasonMeta] = await Promise.all([
-            auth.isAuthenticated ? getSavedList(env, chatId) : Promise.resolve([]),
+            (auth.isAuthenticated && !skipSavedRead) ? getSavedList(env, chatId) : Promise.resolve([]),
             hasVipStreamAccess ? getEpisodeFilesFromD1(env, seriesId, seasonNum, null) : Promise.resolve([]),
-            getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNum, hasVipStreamAccess)
+            needD1SeasonMeta ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNum, hasVipStreamAccess) : Promise.resolve(null)
           ]);
         } else {
           [sDetails, seasonData, savedList, seasonFiles, d1SeasonMeta] = await Promise.all([
             fetchSeriesDetails(env, seriesId),
             fetchSeasonDetails(env, seriesId, seasonNum),
-            auth.isAuthenticated ? getSavedList(env, chatId) : Promise.resolve([]),
+            (auth.isAuthenticated && !skipSavedRead) ? getSavedList(env, chatId) : Promise.resolve([]),
             hasVipStreamAccess ? getEpisodeFilesFromD1(env, seriesId, seasonNum, null) : Promise.resolve([]),
             getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNum, hasVipStreamAccess)
           ]);
@@ -6133,27 +6415,44 @@
           }
         }
 
-        const seasonDownloads = hasVipStreamAccess
-          ? (seasonFiles || []).filter(f => f && (f.is_download_only || f.isDownloadOnly || f.isArchive || f.type === "archive" || f.codec === "ARCHIVE"))
-          : [];
+        const seasonDownloads = [];
+        const filesByEpNumMap = new Map();
+        if (hasVipStreamAccess && Array.isArray(seasonFiles) && seasonFiles.length > 0) {
+          for (const f of seasonFiles) {
+            if (!f) continue;
+            if (f.is_download_only || f.isDownloadOnly || f.isArchive || f.type === "archive" || f.codec === "ARCHIVE") {
+              seasonDownloads.push(f);
+            } else {
+              const eNum = Number(f.episode_number);
+              let bucket = filesByEpNumMap.get(eNum);
+              if (!bucket) {
+                bucket = [];
+                filesByEpNumMap.set(eNum, bucket);
+              }
+              bucket.push({
+                ...f,
+                versionLabel: extractEpisodeVersionLabel(f),
+                tags: normalizeCompactVersionTags(f.tags)
+              });
+            }
+          }
+        }
+        const savedEpNumSet = new Set();
+        if (Array.isArray(savedList) && savedList.length > 0) {
+          const targetSeriesIdStr = String(seriesId);
+          const targetSeasonNum = Number(seasonNum);
+          for (const item of savedList) {
+            if (item && item.contentType === "episode" && String(item.seriesId) === targetSeriesIdStr && Number(item.seasonNumber) === targetSeasonNum) {
+              savedEpNumSet.add(Number(item.episodeNumber));
+            }
+          }
+        }
         const mergedRawEpisodes = Array.from(epMap.values()).sort((a, b) => a.episode_number - b.episode_number);
         const rawEpisodesArray = mergedRawEpisodes.map(ep => {
-          const isSaved = savedList.some(
-            i => i.contentType === "episode" &&
-                String(i.seriesId) === String(seriesId) &&
-                Number(i.seasonNumber) === Number(seasonNum) &&
-                Number(i.episodeNumber) === Number(ep.episode_number)
-          );
-          const epFiles = hasVipStreamAccess
-            ? (seasonFiles || [])
-                .filter(f => Number(f.episode_number) === Number(ep.episode_number) && !f.is_download_only && !f.isDownloadOnly && !f.isArchive && f.type !== "archive" && f.codec !== "ARCHIVE")
-                .map(f => ({
-                  ...f,
-                  versionLabel: extractEpisodeVersionLabel(f),
-                  tags: normalizeCompactVersionTags(f.tags)
-                }))
-            : [];
-          const d1EpMeta = epTitleMap.get(Number(ep.episode_number));
+          const eNum = Number(ep.episode_number);
+          const isSaved = savedEpNumSet.has(eNum);
+          const epFiles = hasVipStreamAccess ? (filesByEpNumMap.get(eNum) || []) : [];
+          const d1EpMeta = epTitleMap.get(eNum);
           const epVersions = hasVipStreamAccess
             ? buildEpisodeVersionsArray(epFiles, d1EpMeta?.versions_json)
             : [];
@@ -6182,7 +6481,7 @@
           seasonCounts[seasonNum] = maxAllowedEpisodes;
         }
 
-        return new Response(JSON.stringify({ ok: true, seriesId, seasonNum, seasons, seasonCounts, seasonEpisodeCount, episodes, downloads: seasonDownloads }), {
+        return new Response(JSON.stringify({ ok: true, seriesId, seasonNum, seasons, seasonCounts, seasonEpisodeCount, episodes, downloads: seasonDownloads, savedSkipped: Boolean(skipSavedRead) }), {
           status: 200,
           headers: {
             ...corsHeaders,
@@ -7317,50 +7616,6 @@
         }
       }
 
-      if (path === "/api/tma/episode-story" && request.method === "POST") {
-        const epRate = checkInMemoryIpRateLimit(episodeStoryIpRateMap, request, 15, 60000);
-        if (epRate.blocked) {
-          return new Response(JSON.stringify({ ok: false, error: `Zu viele Anfragen. Bitte warte ${epRate.waitSec} Sekunden.` }), {
-            status: 429,
-            headers: { ...corsHeaders, "Retry-After": String(epRate.waitSec) }
-          });
-        }
-        const body = await request.json().catch(() => ({}));
-        const seriesIdNum = parseInt(String(body.seriesId || "0"), 10);
-        const seasonNum = parseInt(String(body.season ?? "1"), 10);
-        const episodeNum = parseInt(String(body.episode || "0"), 10);
-        if (!Number.isFinite(seriesIdNum) || seriesIdNum <= 0 || !Number.isFinite(seasonNum) || seasonNum < 0 || !Number.isFinite(episodeNum) || episodeNum <= 0) {
-          return new Response(JSON.stringify({ ok: false, error: "Ungültige Serien-, Staffel- oder Episodennummer." }), { status: 400, headers: corsHeaders });
-        }
-        const [sDetails, seasonData] = await Promise.all([
-          fetchSeriesDetails(env, seriesIdNum),
-          fetchSeasonDetails(env, seriesIdNum, seasonNum)
-        ]);
-        const matchedEp = (seasonData?.episodes || []).find(e => Number(e.episode_number) === episodeNum) || null;
-        const epObj = matchedEp || {
-          episode_number: episodeNum,
-          season_number: seasonNum,
-          name: `Folge ${episodeNum}`
-        };
-        const telegraphUrl = (sDetails?.id && matchedEp)
-          ? await ensureEpisodeTelegraphUrl(env, seriesIdNum, sDetails, seasonNum, matchedEp)
-          : "";
-        return new Response(JSON.stringify({
-          ok: true,
-          telegraphUrl,
-          episode: {
-            episode_number: Number(epObj.episode_number || episodeNum),
-            season_number: Number(epObj.season_number || seasonNum),
-            name: epObj.name || `Folge ${episodeNum}`,
-            overview: epObj.overview || "",
-            air_date: epObj.air_date || "",
-            still_path: epObj.still_path || "",
-            vote_average: Number(epObj.vote_average || 0),
-            runtime: parseInt(String(epObj.runtime || ""), 10) || 0
-          }
-        }), { status: 200, headers: corsHeaders });
-      }
-
       if (path === "/api/tma/wishlist") {
         if (!auth.isAuthenticated) {
           return new Response(JSON.stringify({
@@ -7373,9 +7628,11 @@
           }), { status: 401, headers: corsHeaders });
         }
         if (request.method === "GET") {
-          const rawItems = await getSavedList(env, chatId);
+          const [rawItems, folders] = await Promise.all([
+            getSavedList(env, chatId),
+            getFolders(env, chatId)
+          ]);
           const items = await enrichSavedListWithD1EpisodesAndPosters(env, chatId, rawItems);
-          const folders = await getFolders(env, chatId);
           return new Response(JSON.stringify({ ok: true, items, folders }), { status: 200, headers: corsHeaders });
         }
         if (request.method === "POST") {
@@ -7416,10 +7673,10 @@
             const existing = list.find(i => String(i.tmdbId) === String(body.id) && i.contentType === contentType);
             if (existing) {
               await removeItemByUid(env, targetChatId, existing.uid);
-              await pushSingleItemToTmdbWatchlist(env, targetChatId, body.type, body.id, false);
+              scheduleBackgroundWork(() => pushSingleItemToTmdbWatchlist(env, targetChatId, body.type, body.id, false));
             } else {
               await fetchAndSaveById(env, targetChatId, body.type, body.id, contentType === "series" ? "cat_series" : "cat_movies");
-              await pushSingleItemToTmdbWatchlist(env, targetChatId, body.type, body.id, true);
+              scheduleBackgroundWork(() => pushSingleItemToTmdbWatchlist(env, targetChatId, body.type, body.id, true));
             }
             await flushUserSession(env, targetChatId);
             return new Response(JSON.stringify({ ok: true, saved: !existing }), { status: 200, headers: corsHeaders });
@@ -7491,7 +7748,9 @@
             const targetItem = list.find(i => String(i.uid) === String(body.uid));
             await removeItemByUid(env, targetChatId, body.uid);
             if (targetItem && (targetItem.contentType === "movie" || targetItem.contentType === "series") && targetItem.tmdbId) {
-              await pushSingleItemToTmdbWatchlist(env, targetChatId, targetItem.contentType === "series" ? "s" : "m", targetItem.tmdbId, false);
+              const syncType = targetItem.contentType === "series" ? "s" : "m";
+              const syncId = targetItem.tmdbId;
+              scheduleBackgroundWork(() => pushSingleItemToTmdbWatchlist(env, targetChatId, syncType, syncId, false));
             }
             await flushUserSession(env, targetChatId);
             return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });

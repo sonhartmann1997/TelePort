@@ -150,7 +150,11 @@ class MainActivity : Activity() {
         ws.setSupportZoom(false)
         ws.builtInZoomControls = false
         ws.displayZoomControls = false
+        ws.cacheMode = WebSettings.LOAD_DEFAULT
         ws.userAgentString = "${ws.userAgentString} TelePortAPK/${BuildConfig.VERSION_NAME} ($platformName)"
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            wv.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+        }
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
@@ -177,7 +181,6 @@ class MainActivity : Activity() {
                 if (!mainFrameHadError && errorOverlay.visibility == View.VISIBLE) {
                     errorOverlay.visibility = View.GONE
                 }
-                CookieManager.getInstance().flush()
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -796,13 +799,14 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        CookieManager.getInstance().flush()
         stopLanQrSetupServer()
         webView.onPause()
+        webView.pauseTimers()
     }
 
     override fun onResume() {
         super.onResume()
+        webView.resumeTimers()
         webView.onResume()
         if (setupOverlay.visibility == View.VISIBLE && lanQrSetupServer == null) {
             showServerSetupScreen(canCancel = configuredServerOrigin != null)

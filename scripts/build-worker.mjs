@@ -183,8 +183,8 @@ export async function extractStaticTmaAssets(assembledCode, { minify = true, min
   const cssFileName = `tma-style.${cssHash}.css`;
   const jsFileName = `tma-app.${jsHash}.js`;
 
-  const cssReplacement = `<link rel="stylesheet" href="/assets/${cssFileName}" />`;
-  const jsReplacement = `<script src="/assets/${jsFileName}"></script>`;
+  const cssReplacement = `<link rel="stylesheet" href="/assets/${cssFileName}" /><link rel="preload" as="script" href="/assets/${jsFileName}" />`;
+  const jsReplacement = `<script defer src="/assets/${jsFileName}"></script>`;
 
   // Splice from end to start so indices remain exact
   const unminifiedSlimWorkerCode =

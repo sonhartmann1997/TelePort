@@ -475,7 +475,7 @@
       }
       if (results.length > 0) {
         setCachedTmdb(simCacheKey, results);
-        await saveEntityToD1(env, simCacheKey, "similar", results);
+        scheduleBackgroundWork(() => saveEntityToD1(env, simCacheKey, "similar", results));
       }
     }
     return { results: results || [] };
@@ -2972,6 +2972,11 @@
     const sNum = Math.max(1, parseInt(seasonNumber, 10) || 1);
     const sidNum = Number(seriesId);
     const cacheKey = `tv_season_${seriesId}_${sNum}`;
+    const cachedFast = getCachedTmdb(cacheKey);
+    if (cachedFast && (!FORCE_EPISODE_GROUP_SERIES.has(sidNum) || cachedFast.isEpisodeGroup)) {
+      return cachedFast;
+    }
+
     const existingD1Series = await getSeriesFromD1(env, seriesId);
 
     // Prüfe zuerst, ob für diese Serie eine Episode-Group (z.B. "Parts (edited version)" mit 13 Folgen bei Haus des Geldes) aktiv ist!
@@ -3004,11 +3009,9 @@
                 }))
               };
               setCachedTmdb(cacheKey, groupSeasonResult);
-              if (existingD1Series) {
-                await saveSeasonToD1(env, seriesId, sNum, groupSeasonResult);
-              } else {
-                await saveEntityToD1(env, cacheKey, "tmdb_season", groupSeasonResult);
-              }
+              scheduleBackgroundWork(() => (existingD1Series
+                ? saveSeasonToD1(env, seriesId, sNum, groupSeasonResult)
+                : saveEntityToD1(env, cacheKey, "tmdb_season", groupSeasonResult)));
               return groupSeasonResult;
             }
           }
@@ -3016,8 +3019,7 @@
       }
     }
 
-    const cached = getCachedTmdb(cacheKey);
-    if (cached) return cached;
+    if (cachedFast) return cachedFast;
 
     const d1Season = existingD1Series ? await getSeasonFromD1(env, seriesId, sNum) : await getEntityFromD1(env, cacheKey, D1_MOVIE_TTL_MS);
     if (d1Season) {
@@ -3091,11 +3093,9 @@
         episodes
       };
       setCachedTmdb(cacheKey, result);
-      if (existingD1Series) {
-        await saveSeasonToD1(env, seriesId, sNum, result);
-      } else {
-        await saveEntityToD1(env, cacheKey, "tmdb_season", result);
-      }
+      scheduleBackgroundWork(() => (existingD1Series
+        ? saveSeasonToD1(env, seriesId, sNum, result)
+        : saveEntityToD1(env, cacheKey, "tmdb_season", result)));
       return result;
     } catch (e) {
       return null;
@@ -3134,7 +3134,7 @@
         parts
       };
       setCachedTmdb(cacheKey, result);
-      await saveEntityToD1(env, cacheKey, "collection", result);
+      scheduleBackgroundWork(() => saveEntityToD1(env, cacheKey, "collection", result));
       return result;
     } catch (e) {
       return null;
@@ -3168,7 +3168,7 @@
         current_page: page
       };
       setCachedTmdb(cacheKey, result);
-      await saveEntityToD1(env, cacheKey, "colsearch", result);
+      scheduleBackgroundWork(() => saveEntityToD1(env, cacheKey, "colsearch", result));
       return result;
     } catch (e) {
       return null;
@@ -3908,7 +3908,7 @@
         credits
       };
       setCachedTmdb(cacheKey, result);
-      await saveEntityToD1(env, cacheKey, "person", result);
+      scheduleBackgroundWork(() => saveEntityToD1(env, cacheKey, "person", result));
       return result;
     } catch (e) {
       return null;
@@ -4097,7 +4097,7 @@
       if (!res.ok) return null;
       data = await res.json();
       setCachedTmdb(rawCacheKey, data);
-      await saveSearchCacheToD1(env, rawCacheKey, effectiveQuery, pageNum, data);
+      scheduleBackgroundWork(() => saveSearchCacheToD1(env, rawCacheKey, effectiveQuery, pageNum, data));
     }
     return data;
   }

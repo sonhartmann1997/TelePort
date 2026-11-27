@@ -230,9 +230,29 @@
       if (hasD1 && typeof getEntityFromD1 === "function") {
         parsed = await getEntityFromD1(env, "TG_ANTI_SPAM_STATE_JSON", 7 * 86400000, { ramTtlMs: 30000 }).catch(() => null);
       }
-      if (!parsed) {
+      if (!parsed && (!hasD1 || (!memoryFallback.has("kv_empty_TG_ANTI_SPAM_STATE_JSON") && env?.MOVIE_SAVED))) {
         const raw = await kvCachedGetRaw(env, "TG_ANTI_SPAM_STATE_JSON", "MOVIE_SAVED");
-        if (raw) parsed = JSON.parse(raw);
+        if (raw) {
+          parsed = JSON.parse(raw);
+          if (hasD1 && typeof saveEntityToD1 === "function" && parsed && typeof parsed === "object") {
+            saveEntityToD1(env, "TG_ANTI_SPAM_STATE_JSON", "anti_spam", parsed).catch(() => {});
+          }
+        } else if (hasD1) {
+          memoryFallback.set("kv_empty_TG_ANTI_SPAM_STATE_JSON", 1);
+          if (typeof saveEntityToD1 === "function") {
+            scheduleBackgroundWork(() => saveEntityToD1(env, "TG_ANTI_SPAM_STATE_JSON", "anti_spam", {
+              queue: [],
+              recentProcessed: [],
+              totalEvaluated: 0,
+              totalSentImmediate: 0,
+              totalQueued: 0,
+              totalDrained: 0,
+              total429Hits: 0,
+              floodWaitUntil: 0,
+              savedAt: Date.now()
+            }));
+          }
+        }
       }
       if (parsed && typeof parsed === "object") {
         if (Array.isArray(parsed.queue) && antiSpamState.queue.length === 0) {
@@ -553,18 +573,41 @@
     }
     const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
     const retTs = Number(memoryFallback.get("TG_LOG_RETENTION_DAYS_ts") || 0);
-    if (memoryFallback.has("TG_LOG_RETENTION_DAYS") && (isBrowserSandbox || (Date.now() - retTs) < 60000)) {
+    if (memoryFallback.has("TG_LOG_RETENTION_DAYS") && (isBrowserSandbox || (Date.now() - retTs) < 300000)) {
       return normalizeWorkerRetentionDays(memoryFallback.get("TG_LOG_RETENTION_DAYS"));
     }
-    try {
-      const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MOVIE_SAVED", { ttlMs: 60000 });
-      if (raw) {
-        const norm = normalizeWorkerRetentionDays(raw);
-        memoryFallback.set("TG_LOG_RETENTION_DAYS", norm);
-        memoryFallback.set("TG_LOG_RETENTION_DAYS_ts", Date.now());
-        return norm;
-      }
-    } catch (e) {}
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof getEntityFromD1 === "function") {
+      try {
+        const fromD1 = await getEntityFromD1(env, "TG_LOG_RETENTION_DAYS", 3650 * 86400000, { ramTtlMs: 300000 });
+        const d1Days = typeof fromD1 === "object" && fromD1 !== null ? fromD1.days : fromD1;
+        if (d1Days) {
+          const norm = normalizeWorkerRetentionDays(d1Days);
+          memoryFallback.set("TG_LOG_RETENTION_DAYS", norm);
+          memoryFallback.set("TG_LOG_RETENTION_DAYS_ts", Date.now());
+          return norm;
+        }
+      } catch (e) {}
+    }
+    if (!hasD1 || (!memoryFallback.has("kv_empty_TG_LOG_RETENTION_DAYS") && env?.MOVIE_SAVED)) {
+      try {
+        const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MOVIE_SAVED", { ttlMs: 300000 });
+        if (raw) {
+          const norm = normalizeWorkerRetentionDays(raw);
+          memoryFallback.set("TG_LOG_RETENTION_DAYS", norm);
+          memoryFallback.set("TG_LOG_RETENTION_DAYS_ts", Date.now());
+          if (hasD1 && typeof saveEntityToD1 === "function") {
+            saveEntityToD1(env, "TG_LOG_RETENTION_DAYS", "config", { days: norm, updatedAt: Date.now() }).catch(() => {});
+          }
+          return norm;
+        } else if (hasD1) {
+          memoryFallback.set("kv_empty_TG_LOG_RETENTION_DAYS", 1);
+          if (typeof saveEntityToD1 === "function") {
+            scheduleBackgroundWork(() => saveEntityToD1(env, "TG_LOG_RETENTION_DAYS", "config", { days: 30, updatedAt: Date.now() }));
+          }
+        }
+      } catch (e) {}
+    }
     memoryFallback.set("TG_LOG_RETENTION_DAYS", 30);
     memoryFallback.set("TG_LOG_RETENTION_DAYS_ts", Date.now());
     return 30;
@@ -592,11 +635,16 @@
         }
         if (Array.isArray(loaded)) {
           rawList = loaded;
-        } else {
+        } else if (!hasD1 || (!memoryFallback.has("kv_empty_TG_ACTIVITY_LOG_JSON") && env?.MOVIE_SAVED)) {
           const str = await kvCachedGetRaw(env, "TG_ACTIVITY_LOG_JSON", "MOVIE_SAVED");
           if (str) {
             const parsed = JSON.parse(str);
             if (Array.isArray(parsed)) rawList = parsed;
+          } else if (hasD1) {
+            memoryFallback.set("kv_empty_TG_ACTIVITY_LOG_JSON", 1);
+            if (typeof saveEntityToD1 === "function") {
+              scheduleBackgroundWork(() => saveEntityToD1(env, "TG_ACTIVITY_LOG_JSON", "activity_log", []));
+            }
           }
         }
       } catch (e) {}
@@ -636,11 +684,16 @@
         });
       }
       if (retentionDaysOverride !== null) {
-        await kvStageWrite(env, "TG_LOG_RETENTION_DAYS", String(retentionDays), {
-          bindingName: "MOVIE_SAVED",
-          periodicOnly: false,
-          flushNow: true
-        });
+        memoryFallback.delete("kv_empty_TG_LOG_RETENTION_DAYS");
+        if (hasD1 && typeof saveEntityToD1 === "function") {
+          await saveEntityToD1(env, "TG_LOG_RETENTION_DAYS", "config", { days: retentionDays, updatedAt: Date.now() });
+        } else {
+          await kvStageWrite(env, "TG_LOG_RETENTION_DAYS", String(retentionDays), {
+            bindingName: "MOVIE_SAVED",
+            periodicOnly: false,
+            flushNow: true
+          });
+        }
       }
     }
 
@@ -913,13 +966,13 @@
   async function getVideoCoverMode(env) {
     const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
     const coverTs = Number(memoryFallback.get("TG_VIDEO_COVER_MODE_ts") || 0);
-    if (memoryFallback.has("TG_VIDEO_COVER_MODE") && (isBrowserSandbox || (Date.now() - coverTs) < 60000)) {
+    if (memoryFallback.has("TG_VIDEO_COVER_MODE") && (isBrowserSandbox || (Date.now() - coverTs) < 300000)) {
       return normalizeVideoCoverMode(memoryFallback.get("TG_VIDEO_COVER_MODE"));
     }
     const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
     if (hasD1 && typeof getEntityFromD1 === "function") {
       try {
-        const fromD1 = await getEntityFromD1(env, "TG_VIDEO_COVER_MODE", 3650 * 86400000, { ramTtlMs: 60000 });
+        const fromD1 = await getEntityFromD1(env, "TG_VIDEO_COVER_MODE", 3650 * 86400000, { ramTtlMs: 300000 });
         const d1Val = typeof fromD1 === "string" ? fromD1 : (fromD1 && typeof fromD1 === "object" ? fromD1.mode : "");
         if (d1Val) {
           const mode = normalizeVideoCoverMode(d1Val);
@@ -929,18 +982,25 @@
         }
       } catch (e) {}
     }
-    try {
-      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MOVIE_SAVED", { ttlMs: 60000 });
-      if (raw) {
-        const mode = normalizeVideoCoverMode(raw);
-        memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
-        memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
-        if (hasD1 && typeof saveEntityToD1 === "function") {
-          saveEntityToD1(env, "TG_VIDEO_COVER_MODE", "config", { mode, updatedAt: Date.now() }).catch(() => {});
+    if (!hasD1 || (!memoryFallback.has("kv_empty_TG_VIDEO_COVER_MODE") && env?.MOVIE_SAVED)) {
+      try {
+        const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MOVIE_SAVED", { ttlMs: 300000 });
+        if (raw) {
+          const mode = normalizeVideoCoverMode(raw);
+          memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
+          memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
+          if (hasD1 && typeof saveEntityToD1 === "function") {
+            saveEntityToD1(env, "TG_VIDEO_COVER_MODE", "config", { mode, updatedAt: Date.now() }).catch(() => {});
+          }
+          return mode;
+        } else if (hasD1) {
+          memoryFallback.set("kv_empty_TG_VIDEO_COVER_MODE", 1);
+          if (typeof saveEntityToD1 === "function") {
+            scheduleBackgroundWork(() => saveEntityToD1(env, "TG_VIDEO_COVER_MODE", "config", { mode: "backdrop", updatedAt: Date.now() }));
+          }
         }
-        return mode;
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
     memoryFallback.set("TG_VIDEO_COVER_MODE", "backdrop");
     memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
     return "backdrop";
@@ -950,6 +1010,7 @@
     const mode = normalizeVideoCoverMode(modeInput);
     memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
     memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
+    memoryFallback.delete("kv_empty_TG_VIDEO_COVER_MODE");
     const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
     if (hasD1 && typeof saveEntityToD1 === "function") {
       try {
@@ -1653,14 +1714,14 @@
     const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
     const speedTs = Number(memoryFallback.get("TG_WORKER_SPEED_PROFILE_ts") || 0);
     const cached = normalizeKey(memoryFallback.get(memKey));
-    if (cached && (isBrowserSandbox || (Date.now() - speedTs) < 60000)) {
+    if (cached && (isBrowserSandbox || (Date.now() - speedTs) < 300000)) {
       return WORKER_SPEED_PROFILES[cached];
     }
 
     const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
     if (hasD1 && typeof getEntityFromD1 === "function") {
       try {
-        const fromD1 = await getEntityFromD1(env, memKey, 3650 * 86400000, { ramTtlMs: 60000 });
+        const fromD1 = await getEntityFromD1(env, memKey, 3650 * 86400000, { ramTtlMs: 300000 });
         const d1Key = normalizeKey(typeof fromD1 === "string" ? fromD1 : (fromD1 && typeof fromD1 === "object" ? fromD1.profile : ""));
         if (d1Key) {
           memoryFallback.set(memKey, d1Key);
@@ -1670,18 +1731,25 @@
       } catch (e) {}
     }
 
-    try {
-      const raw = await kvCachedGetRaw(env, memKey, "MOVIE_SAVED", { ttlMs: 60000 });
-      const kvVal = normalizeKey(raw);
-      if (kvVal) {
-        memoryFallback.set(memKey, kvVal);
-        memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
-        if (hasD1 && typeof saveEntityToD1 === "function") {
-          saveEntityToD1(env, memKey, "config", { profile: kvVal, updatedAt: Date.now() }).catch(() => {});
+    if (!hasD1 || (!memoryFallback.has("kv_empty_TG_WORKER_SPEED_PROFILE") && env?.MOVIE_SAVED)) {
+      try {
+        const raw = await kvCachedGetRaw(env, memKey, "MOVIE_SAVED", { ttlMs: 300000 });
+        const kvVal = normalizeKey(raw);
+        if (kvVal) {
+          memoryFallback.set(memKey, kvVal);
+          memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
+          if (hasD1 && typeof saveEntityToD1 === "function") {
+            saveEntityToD1(env, memKey, "config", { profile: kvVal, updatedAt: Date.now() }).catch(() => {});
+          }
+          return WORKER_SPEED_PROFILES[kvVal];
+        } else if (hasD1) {
+          memoryFallback.set("kv_empty_TG_WORKER_SPEED_PROFILE", 1);
+          if (typeof saveEntityToD1 === "function") {
+            scheduleBackgroundWork(() => saveEntityToD1(env, memKey, "config", { profile: "free_turbo", updatedAt: Date.now() }));
+          }
         }
-        return WORKER_SPEED_PROFILES[kvVal];
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
 
     memoryFallback.set(memKey, "free_turbo");
     memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
@@ -1693,6 +1761,7 @@
     const valid = (clean === "balanced" || clean === "paid_pro") ? clean : "free_turbo";
     memoryFallback.set("TG_WORKER_SPEED_PROFILE", valid);
     memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
+    memoryFallback.delete("kv_empty_TG_WORKER_SPEED_PROFILE");
     const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
     if (hasD1 && typeof saveEntityToD1 === "function") {
       await saveEntityToD1(env, "TG_WORKER_SPEED_PROFILE", "config", { profile: valid, updatedAt: Date.now() });
@@ -4302,6 +4371,9 @@
 
     if (migratedFromLegacy) {
       await stageUserBundleWrite(env, cleanId, bundle, { deferKvWrite: true });
+    } else if (hasD1 && typeof saveEntityToD1 === "function" && cleanId !== "guest") {
+      // Leeres v2-Bundle 1x asynchron in D1 ablegen -> verhindert 5 KV-Reads nach jedem Worker-Cold-Start!
+      scheduleBackgroundWork(() => saveEntityToD1(env, bundleKey, "user_bundle", bundle));
     }
     return bundle;
   }
@@ -4314,12 +4386,12 @@
       const cachedList = memoryFallback.get(`user_${cleanId}`);
       if (Array.isArray(cachedList)) return cachedList;
     }
-    const bundle = await getUserBundle(env, cleanId);
+    const [bundle, d1ItemsRaw] = await Promise.all([
+      getUserBundle(env, cleanId),
+      getPlaylistItemsFromD1(env, cleanId).catch(() => [])
+    ]);
     const kvItems = normalizeSavedItems(bundle.savedList);
-    let d1Items = [];
-    try {
-      d1Items = await getPlaylistItemsFromD1(env, cleanId);
-    } catch (e) {}
+    const d1Items = Array.isArray(d1ItemsRaw) ? d1ItemsRaw : [];
     if (Array.isArray(d1Items) && d1Items.length > 0) {
       const byUid = new Map();
       for (const it of kvItems) {
@@ -4400,14 +4472,14 @@
     const lastFoldersTs = Number(memoryFallback.get(`folders_hydrated_ts_${cleanId}`) || 0);
     if (!options?.forceRefresh && memoryFallback.has(`folders_${cleanId}`) && (now - lastFoldersTs) < 60000) {
       const cachedFolders = memoryFallback.get(`folders_${cleanId}`);
-      if (Array.isArray(cachedFolders) && cachedFolders.length > 0) return cachedFolders;
+      if (Array.isArray(cachedFolders)) return cachedFolders;
     }
-    const bundle = await getUserBundle(env, cleanId);
+    const [bundle, d1FoldersRaw] = await Promise.all([
+      getUserBundle(env, cleanId),
+      getPlaylistFoldersFromD1(env, cleanId).catch(() => [])
+    ]);
     const kvFolders = Array.isArray(bundle.folders) ? bundle.folders : [];
-    let d1Folders = [];
-    try {
-      d1Folders = await getPlaylistFoldersFromD1(env, cleanId);
-    } catch (e) {}
+    const d1Folders = Array.isArray(d1FoldersRaw) ? d1FoldersRaw : [];
     if (Array.isArray(d1Folders) && d1Folders.length > 0) {
       const byId = new Map();
       for (const f of kvFolders) {
@@ -4417,9 +4489,11 @@
         if (df && df.id) byId.set(String(df.id), { ...(byId.get(String(df.id)) || {}), ...df });
       }
       bundle.folders = Array.from(byId.values());
-      memoryFallback.set(`folders_${cleanId}`, bundle.folders);
-      memoryFallback.set(`folders_hydrated_ts_${cleanId}`, now);
+    } else {
+      bundle.folders = kvFolders;
     }
+    memoryFallback.set(`folders_${cleanId}`, bundle.folders);
+    memoryFallback.set(`folders_hydrated_ts_${cleanId}`, now);
     return Array.isArray(bundle.folders) ? bundle.folders : [];
   }
 
@@ -4589,14 +4663,14 @@
     const key = "bot_vip_hidden_keys";
     const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
     const hiddenTs = Number(memoryFallback.get(`${key}_ts`) || 0);
-    if (memoryFallback.has(key) && (isBrowserSandbox || (Date.now() - hiddenTs) < 60000)) {
+    if (memoryFallback.has(key) && (isBrowserSandbox || (Date.now() - hiddenTs) < 300000)) {
       const mem = memoryFallback.get(key);
       if (Array.isArray(mem)) return new Set(mem);
     }
     const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
     if (hasD1 && typeof getEntityFromD1 === "function") {
       try {
-        const fromD1 = await getEntityFromD1(env, key, 3650 * 86400000, { ramTtlMs: 60000 });
+        const fromD1 = await getEntityFromD1(env, key, 3650 * 86400000, { ramTtlMs: 300000 });
         if (Array.isArray(fromD1)) {
           memoryFallback.set(key, fromD1);
           memoryFallback.set(`${key}_ts`, Date.now());
@@ -4604,17 +4678,24 @@
         }
       } catch (e) {}
     }
-    try {
-      const raw = await kvCachedGetRaw(env, key, "MOVIE_SAVED", { ttlMs: 60000 });
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          memoryFallback.set(key, parsed);
-          memoryFallback.set(`${key}_ts`, Date.now());
-          return new Set(parsed);
+    if (!hasD1 || (!memoryFallback.has(`kv_empty_${key}`) && env?.MOVIE_SAVED)) {
+      try {
+        const raw = await kvCachedGetRaw(env, key, "MOVIE_SAVED", { ttlMs: 300000 });
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            memoryFallback.set(key, parsed);
+            memoryFallback.set(`${key}_ts`, Date.now());
+            if (hasD1 && typeof saveEntityToD1 === "function") {
+              saveEntityToD1(env, key, "config", parsed).catch(() => {});
+            }
+            return new Set(parsed);
+          }
+        } else if (hasD1) {
+          memoryFallback.set(`kv_empty_${key}`, 1);
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
     memoryFallback.set(key, []);
     memoryFallback.set(`${key}_ts`, Date.now());
     return new Set();
@@ -4625,6 +4706,7 @@
     const arr = Array.from(keySet || []);
     memoryFallback.set(key, arr);
     memoryFallback.set(`${key}_ts`, Date.now());
+    memoryFallback.delete(`kv_empty_${key}`);
     const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
     if (hasD1 && typeof saveEntityToD1 === "function") {
       await saveEntityToD1(env, key, "config", arr);

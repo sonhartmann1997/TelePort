@@ -218,15 +218,15 @@
           const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
           const isRealTma = isRealTelegramMiniAppClient();
           const lightboxRoot = document.getElementById("lightboxRoot");
-          const hasLightbox = Boolean(lightboxRoot && lightboxRoot.innerHTML.trim().length > 0);
+          const hasLightbox = Boolean(lightboxRoot && lightboxRoot.firstElementChild);
           const modalRoot = document.getElementById("modalRoot");
-          const hasModal = Boolean(modalRoot && modalRoot.innerHTML.trim().length > 0);
+          const hasModal = Boolean(modalRoot && modalRoot.firstElementChild);
           const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
-          const hasSpotlight = Boolean(spotlightRoot && spotlightRoot.innerHTML.trim().length > 0);
+          const hasSpotlight = Boolean(spotlightRoot && spotlightRoot.firstElementChild);
           const customDialogRoot = document.getElementById("customDialogRoot");
-          const hasCustomDialog = Boolean(customDialogRoot && customDialogRoot.innerHTML.trim().length > 0);
+          const hasCustomDialog = Boolean(customDialogRoot && customDialogRoot.firstElementChild);
           const subModalRoot = document.getElementById("subModalOverlayRoot");
-          const hasSubModal = Boolean(subModalRoot && subModalRoot.innerHTML.trim().length > 0);
+          const hasSubModal = Boolean(subModalRoot && subModalRoot.firstElementChild);
           const detailStage = document.getElementById("detailHeroStageEl");
           const heroStage = document.getElementById("heroStageEl");
           const hasForegroundTrailer = Boolean(
@@ -399,7 +399,7 @@
 
       function openCurrentViewInBot() {
         const modalEl = document.getElementById("modalRoot");
-        if (modalEl && modalEl.innerHTML.trim() && state.activeDetails && state.activeDetails.id) {
+        if (modalEl && modalEl.firstElementChild && state.activeDetails && state.activeDetails.id) {
           const tc = state.activeDetails.typeCode || state.type || "m";
           openInBot(tc + "_" + state.activeDetails.id);
           return;
@@ -982,7 +982,7 @@
         } catch (_e) {}
         const isApkUa = /teleportapk\\//i.test(ua) || Boolean(nativeBridge);
         const isFireTv = nativePlatform === "firetv" || /teleportapk\\/[^\\s]+.*\\bfiretv\\b/i.test(ua) || /\\baft[a-z0-9]{1,5}\\b|fire\\s?tv/i.test(ua) || (/\\bsilk\\b/i.test(ua) && !/mobile/i.test(ua) && maxTouch === 0 && w >= 900);
-        const isSmartTv = isFireTv || nativePlatform === "androidtv" || /teleportapk\\/[^\\s]+.*\\bandroidtv\\b/i.test(ua) || /android.*tv|smart-tv|smarttv|googletv|bravia|webos|tizen|crkey|playstation|xbox|nintendo/i.test(ua);
+        const isSmartTv = isFireTv || nativePlatform === "androidtv" || /teleportapk\\/[^\\s]+.*\\bandroidtv\\b/i.test(ua) || /android.*tv|smart-tv|smarttv|googletv|bravia|webos|tizen|crkey|playstation|xbox|nintendo/i.test(ua) || (/android/i.test(ua) && !/mobile/i.test(ua) && maxTouch === 0 && w >= 900);
         let devType = "desktop";
         let devLabel = "💻 Desktop";
         if (isSmartTv) {
@@ -999,6 +999,15 @@
           devLabel = "📱 Mobil";
         }
         document.body.setAttribute("data-device", devType);
+        if (devType === "tv") {
+          try {
+            if (localStorage.getItem("tma_trailer_preview_enabled") === null) {
+              trailerPreviewEnabled = false;
+            }
+          } catch (_e) {
+            trailerPreviewEnabled = false;
+          }
+        }
         if (isApkUa) {
           document.body.setAttribute("data-apk", "1");
         } else {
@@ -2145,7 +2154,11 @@
           state.isAuthenticated = false;
           state.authUser = null;
           chatId = "guest";
+          if (typeof savedKeysSet !== "undefined" && savedKeysSet && typeof savedKeysSet.clear === "function") savedKeysSet.clear();
         }
+        savedKeysHydratedChatId = "";
+        settingsHydratedChatId = "";
+        if (typeof window.invalidateClientWishlistCache === "function") window.invalidateClientWishlistCache();
         window._lastAdminOverviewCache = null;
         window._adminReportsCache = [];
         window._adminBackupPlaylistsByChatId = {};
@@ -2243,14 +2256,181 @@
       let lastModalTriggerEl = null;
       let lastModalHeroReturnId = "";
 
-      // Clientseitiger Instant-Cache (5 Min TTL) für Detailansichten & Staffeln (#3)
+      // Clientseitiger Instant-Cache (5 Min TTL, LRU-begrenzt + In-Flight Deduplizierung) für Detailansichten & Staffeln (#3)
       const CLIENT_CACHE_TTL_MS = 5 * 60 * 1000;
+      const CLIENT_DETAILS_CACHE_MAX = 60;
+      const CLIENT_SEASON_CACHE_MAX = 40;
       const clientDetailsCache = new Map();
       const clientSeasonCache = new Map();
+      const inFlightDetailsFetchMap = new Map();
+      const inFlightSeasonFetchMap = new Map();
+
+      function setLruMapEntryClient(map, key, value, maxSize) {
+        if (!(map instanceof Map)) return;
+        if (map.has(key)) map.delete(key);
+        map.set(key, value);
+        while (map.size > maxSize) {
+          const oldestKey = map.keys().next().value;
+          if (oldestKey === undefined) break;
+          map.delete(oldestKey);
+        }
+      }
+
+      const CLIENT_SIMILAR_CACHE_MAX = 40;
+      const clientSimilarCache = new Map();
+      const inFlightSimilarFetchMap = new Map();
+
+      function isLocalSavedKeysHydratedClient() {
+        return Boolean(
+          typeof savedKeysHydratedChatId === "string" &&
+          savedKeysHydratedChatId &&
+          state &&
+          state.isAuthenticated &&
+          String(chatId || "") === savedKeysHydratedChatId
+        );
+      }
+
+      function isLocalSettingsHydratedClient() {
+        return Boolean(
+          typeof settingsHydratedChatId === "string" &&
+          settingsHydratedChatId &&
+          state &&
+          state.isAuthenticated &&
+          String(chatId || "") === settingsHydratedChatId
+        );
+      }
+
+      function fetchMediaDetailsDedupClient(typeCode, id) {
+        const tc = typeCode === "s" ? "s" : "m";
+        const vipAllowed = typeof isCurrentUserVip === "function" ? isCurrentUserVip() : false;
+        const cacheKey = tc + "_" + id + "_" + (vipAllowed ? "vip" : "std");
+        const cached = clientDetailsCache.get(cacheKey);
+        if (cached && (Date.now() - cached.ts < CLIENT_CACHE_TTL_MS)) {
+          if (cached.data && isLocalSavedKeysHydratedClient()) {
+            cached.data.isSaved = savedKeysSet.has(tc + "_" + (cached.data.id || id));
+          }
+          setLruMapEntryClient(clientDetailsCache, cacheKey, cached, CLIENT_DETAILS_CACHE_MAX);
+          return Promise.resolve(cached.data);
+        }
+        const existingPromise = inFlightDetailsFetchMap.get(cacheKey);
+        if (existingPromise) return existingPromise;
+        const skipSavedParam = isLocalSavedKeysHydratedClient() ? "&skipSaved=1" : "";
+        const promise = apiFetchJson(API_BASE + "/details?type=" + tc + "&id=" + encodeURIComponent(id) + skipSavedParam)
+          .then((d) => {
+            if (d && d.ok !== false) {
+              if ((d.savedSkipped || isLocalSavedKeysHydratedClient()) && typeof savedKeysSet !== "undefined") {
+                d.isSaved = savedKeysSet.has(tc + "_" + (d.id || id));
+              }
+              setLruMapEntryClient(clientDetailsCache, cacheKey, { data: d, ts: Date.now() }, CLIENT_DETAILS_CACHE_MAX);
+            }
+            return d;
+          })
+          .finally(() => {
+            inFlightDetailsFetchMap.delete(cacheKey);
+          });
+        inFlightDetailsFetchMap.set(cacheKey, promise);
+        return promise;
+      }
+
+      function fetchSimilarDedupClient(typeCode, id, onlyVipFlag = "0") {
+        const tc = typeCode === "s" ? "s" : "m";
+        const vipBit = (typeof isCurrentUserVip === "function" && isCurrentUserVip()) ? "1" : "0";
+        const s = (state && state.settings) || {};
+        const filterSig = JSON.stringify([
+          s.filtersActive === false ? 0 : 1,
+          s.showUnreleased ? 1 : 0,
+          onlyVipFlag === "1" ? 1 : 0,
+          vipBit,
+          s.includedGenres || [], s.excludedGenres || [],
+          s.includedFsk || [], s.excludedFsk || [],
+          s.includedEras || [], s.excludedEras || [],
+          s.includedStudios || [], s.excludedStudios || [],
+          s.includedPlatforms || [], s.excludedPlatforms || []
+        ]);
+        const cacheKey = tc + "_" + id + "_" + filterSig;
+        const cached = clientSimilarCache.get(cacheKey);
+        if (cached && (Date.now() - cached.ts < CLIENT_CACHE_TTL_MS)) {
+          setLruMapEntryClient(clientSimilarCache, cacheKey, cached, CLIENT_SIMILAR_CACHE_MAX);
+          return Promise.resolve(cached.data);
+        }
+        const existingPromise = inFlightSimilarFetchMap.get(cacheKey);
+        if (existingPromise) return existingPromise;
+        const promise = apiFetchJson(
+          API_BASE + "/similar?type=" + encodeURIComponent(tc) +
+          "&id=" + encodeURIComponent(id) +
+          "&onlyVip=" + encodeURIComponent(onlyVipFlag)
+        )
+          .then((r) => {
+            if (r && r.ok !== false) {
+              setLruMapEntryClient(clientSimilarCache, cacheKey, { data: r, ts: Date.now() }, CLIENT_SIMILAR_CACHE_MAX);
+            }
+            return r;
+          })
+          .finally(() => {
+            inFlightSimilarFetchMap.delete(cacheKey);
+          });
+        inFlightSimilarFetchMap.set(cacheKey, promise);
+        return promise;
+      }
+
+      function fetchSeasonDedupClient(seriesId, seasonNum, forceRefresh = false) {
+        const vipAllowed = typeof isCurrentUserVip === "function" ? isCurrentUserVip() : false;
+        const cacheKey = seriesId + "_" + seasonNum + "_" + (vipAllowed ? "vip" : "std");
+        const applyLocalEpisodeSavedFlags = (seasonObj) => {
+          if (seasonObj && Array.isArray(seasonObj.episodes) && isLocalSavedKeysHydratedClient()) {
+            seasonObj.episodes.forEach((ep) => {
+              if (ep && ep.episode_number !== undefined) {
+                ep.isSaved = savedKeysSet.has("ep_" + seriesId + "_" + Number(seasonNum) + "_" + Number(ep.episode_number));
+              }
+            });
+          }
+          return seasonObj;
+        };
+        if (!forceRefresh) {
+          const cached = clientSeasonCache.get(cacheKey);
+          if (cached && (Date.now() - cached.ts < CLIENT_CACHE_TTL_MS)) {
+            applyLocalEpisodeSavedFlags(cached.data);
+            setLruMapEntryClient(clientSeasonCache, cacheKey, cached, CLIENT_SEASON_CACHE_MAX);
+            return Promise.resolve(cached.data);
+          }
+        }
+        const existingPromise = inFlightSeasonFetchMap.get(cacheKey);
+        if (existingPromise) return existingPromise;
+        const skipSavedParam = isLocalSavedKeysHydratedClient() ? "&skipSaved=1" : "";
+        const promise = apiFetchJson(API_BASE + "/season?seriesId=" + encodeURIComponent(seriesId) + "&season=" + encodeURIComponent(seasonNum) + skipSavedParam)
+          .then((s) => {
+            if (s && s.ok !== false) {
+              if (s.savedSkipped || isLocalSavedKeysHydratedClient()) applyLocalEpisodeSavedFlags(s);
+              setLruMapEntryClient(clientSeasonCache, cacheKey, { data: s, ts: Date.now() }, CLIENT_SEASON_CACHE_MAX);
+            }
+            return s;
+          })
+          .finally(() => {
+            inFlightSeasonFetchMap.delete(cacheKey);
+          });
+        inFlightSeasonFetchMap.set(cacheKey, promise);
+        return promise;
+      }
 
       function clearClientMediaCaches() {
         clientDetailsCache.clear();
         clientSeasonCache.clear();
+        clientSimilarCache.clear();
+        inFlightDetailsFetchMap.clear();
+        inFlightSeasonFetchMap.clear();
+        inFlightSimilarFetchMap.clear();
+        if (typeof clientCollectionDetailCache !== "undefined" && clientCollectionDetailCache instanceof Map) {
+          clientCollectionDetailCache.clear();
+        }
+        if (typeof clientCollectionDetailInflight !== "undefined" && clientCollectionDetailInflight instanceof Map) {
+          clientCollectionDetailInflight.clear();
+        }
+        if (window._clientPersonSpotlightCache instanceof Map) {
+          window._clientPersonSpotlightCache.clear();
+        }
+        if (typeof window.invalidateClientWishlistCache === "function") {
+          window.invalidateClientWishlistCache();
+        }
         if (window._clientApiGetCache instanceof Map) {
           window._clientApiGetCache.clear();
         }
@@ -2275,7 +2455,7 @@
 
       function saveModalReturnFocusTarget(typeCode, id) {
         const modalEl = document.getElementById("modalRoot");
-        const modalAlreadyOpen = Boolean(modalEl && modalEl.innerHTML.trim());
+        const modalAlreadyOpen = Boolean(modalEl && modalEl.firstElementChild);
         if (!modalAlreadyOpen) {
           lastModalTriggerKey = (typeCode && id) ? (typeCode + "_" + id) : "";
           lastModalTriggerEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : null;
@@ -2317,12 +2497,15 @@
         }
         const heroStageEl = document.getElementById("heroStageEl");
         const m = document.getElementById("modalRoot");
-        if ((!m || !m.innerHTML.trim()) && heroStageEl && heroStageEl.classList.contains("is-trailer-foreground-mode") && typeof exitHeroForegroundTrailerModeClient === "function") {
+        if ((!m || !m.firstElementChild) && heroStageEl && heroStageEl.classList.contains("is-trailer-foreground-mode") && typeof exitHeroForegroundTrailerModeClient === "function") {
           exitHeroForegroundTrailerModeClient();
           return;
         }
         if (typeof stopDetailBackgroundVideoTeaserClient === "function") {
           stopDetailBackgroundVideoTeaserClient();
+        }
+        if (typeof window.disconnectDetailBelowFoldObserverClient === "function") {
+          window.disconnectDetailBelowFoldObserverClient();
         }
         if (typeof activeDetailReqSeq === "number") activeDetailReqSeq++;
         if (typeof activeSeasonReqSeq === "number") activeSeasonReqSeq++;
@@ -2375,6 +2558,8 @@
         } catch (e) { return []; }
       })();
       let savedKeysSet = new Set();
+      let savedKeysHydratedChatId = "";
+      let settingsHydratedChatId = "";
 
       function addRecentViewedItem(d, typeCode) {
         if (!d || !d.id) return;
@@ -2633,22 +2818,37 @@
         renderRightMenuSubPanelContentClient(jumpFocusIntoPanel);
 
         if (tabName === "wishlist" && state.isAuthenticated) {
-          try {
-            const r = await apiFetchJson(API_BASE + "/wishlist");
-            if (r && Array.isArray(r.items)) {
-              state.cachedWishlistItems = r.items;
-              state.cachedWishlistFolders = r.folders || [];
-              savedKeysSet.clear();
-              r.items.forEach(it => {
-                if (it.contentType === "movie" && it.tmdbId) savedKeysSet.add("m_" + it.tmdbId);
-                else if (it.contentType === "series" && it.tmdbId) savedKeysSet.add("s_" + it.tmdbId);
-              });
-              syncRightMenuBadgesClient();
-              if (state.rightMenuTab === "wishlist") {
-                renderRightMenuSubPanelContentClient(false);
+          const curCid = String(chatId || "");
+          const isWlFresh = (typeof window.isClientWishlistCacheFresh === "function")
+            ? window.isClientWishlistCacheFresh(curCid)
+            : false;
+          if (!isWlFresh) {
+            try {
+              const r = await apiFetchJson(API_BASE + "/wishlist");
+              if (r && Array.isArray(r.items)) {
+                state.cachedWishlistItems = r.items;
+                state.cachedWishlistFolders = r.folders || [];
+                if (typeof window.markClientWishlistCacheFresh === "function") {
+                  window.markClientWishlistCacheFresh(curCid);
+                }
+                savedKeysSet.clear();
+                r.items.forEach(it => {
+                  if (it.contentType === "movie" && it.tmdbId) savedKeysSet.add("m_" + it.tmdbId);
+                  else if (it.contentType === "series" && it.tmdbId) savedKeysSet.add("s_" + it.tmdbId);
+                  else if (it.contentType === "episode" && it.seriesId != null && it.seasonNumber != null && it.episodeNumber != null) {
+                    savedKeysSet.add("ep_" + it.seriesId + "_" + Number(it.seasonNumber) + "_" + Number(it.episodeNumber));
+                  }
+                });
+                if (state.isAuthenticated && chatId && chatId !== "guest") {
+                  savedKeysHydratedChatId = String(chatId);
+                }
+                syncRightMenuBadgesClient();
+                if (state.rightMenuTab === "wishlist") {
+                  renderRightMenuSubPanelContentClient(false);
+                }
               }
-            }
-          } catch (e) {}
+            } catch (e) {}
+          }
         }
       }
 
@@ -2678,9 +2878,9 @@
         if (document.body && document.body.classList.contains("in-hero-slider")) return false;
         if (document.getElementById("heroStageEl")?.classList.contains("is-trailer-foreground-mode")) return false;
         if (document.getElementById("detailHeroStageEl")?.classList.contains("is-trailer-foreground-mode")) return false;
-        if (document.getElementById("modalRoot")?.innerHTML.trim()) return false;
-        if (document.getElementById("customDialogRoot")?.innerHTML.trim()) return false;
-        if (document.getElementById("lightboxRoot")?.innerHTML.trim()) return false;
+        if (document.getElementById("modalRoot")?.firstElementChild) return false;
+        if (document.getElementById("customDialogRoot")?.firstElementChild) return false;
+        if (document.getElementById("lightboxRoot")?.firstElementChild) return false;
         return true;
       }
 
@@ -2751,7 +2951,7 @@
         const rightEdge = document.getElementById("catalogEdgeTriggerRight");
         if (!leftEdge && !rightEdge) return;
         if (document.body && document.body.classList.contains("in-hero-slider")) return;
-        if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
+        if (document.getElementById("modalRoot")?.firstElementChild) return;
         if (leftEdge) leftEdge.classList.add("is-edge-hint-visible");
         if (rightEdge) rightEdge.classList.add("is-edge-hint-visible");
         if (sideEdgeHintsFadeTimer) {
@@ -2946,7 +3146,7 @@
           return '<div class="rm-entry-card" tabindex="0" onclick="openItemFromRightMenuClient(\\'' + escJs(it.tc) + '\\',' + Number(it.targetId) + ')">' +
             '<div style="display:flex;align-items:center;gap:9px;min-width:0;flex:1">' +
               (thumbUrl
-                ? '<img src="' + esc(thumbUrl) + '" alt="" loading="lazy" style="width:36px;height:52px;object-fit:cover;border-radius:6px;flex-shrink:0;background:#0f172a" />'
+                ? '<img src="' + esc(thumbUrl) + '" alt="" loading="lazy" decoding="async" style="width:36px;height:52px;object-fit:cover;border-radius:6px;flex-shrink:0;background:#0f172a" />'
                 : '<div style="width:36px;height:52px;border-radius:6px;background:rgba(30,41,59,0.8);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">' + (it.tc === "s" ? "📺" : "🎬") + '</div>') +
               '<div style="min-width:0;flex:1">' +
                 '<div style="font-size:12.5px;font-weight:800;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(it.title) + '</div>' +
@@ -3097,7 +3297,7 @@
         if (!track) return;
         triggerTmaHapticClient("selection");
         const stepPx = Math.max(220, Math.round(track.clientWidth * 0.65));
-        track.scrollBy({ left: (Number(dirStep) || 1) * stepPx, behavior: "smooth" });
+        track.scrollBy({ left: (Number(dirStep) || 1) * stepPx, behavior: typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth" });
       }
 
       // Verlauf „Zuletzt gesehen“ lebt zentral im rechten Schnellmenü – keine separate Leiste mehr auf der Hauptseite
@@ -3271,6 +3471,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ chatId, action: "toggle_item", type: typeCode, id })
           });
+          if (typeof window.invalidateClientWishlistCache === "function") window.invalidateClientWishlistCache();
           const serverSaved = Boolean(r && r.saved);
           if (serverSaved !== nextSaved) {
             syncCardWishlistBadgeInDom(typeCode, id, serverSaved, false);
@@ -3336,13 +3537,10 @@
         }
         if (prewarmedDetailKeysInFlightSet.has(cacheKey)) return;
         prewarmedDetailKeysInFlightSet.add(cacheKey);
-        apiFetchJson(API_BASE + "/details?type=" + tc + "&id=" + encodeURIComponent(id))
+        fetchMediaDetailsDedupClient(tc, id)
           .then((d) => {
-            if (d && d.ok !== false && typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
-              clientDetailsCache.set(cacheKey, { data: d, ts: Date.now() });
-              if (d.logo_path && typeof preloadClearLogoBitmapClient === "function") {
-                preloadClearLogoBitmapClient(d.logo_path);
-              }
+            if (d && d.ok !== false && d.logo_path && typeof preloadClearLogoBitmapClient === "function") {
+              preloadClearLogoBitmapClient(d.logo_path);
             }
           })
           .catch(() => {})
@@ -3427,32 +3625,67 @@
         });
       };
 
+      let _activeMarqueeCardEl = null;
+      let _activeMarqueeInlineWraps = [];
+      let _activeCardMarqueeTimer = null;
+
       window.syncActiveCardMarquee = function(focusedEl) {
+        if (_activeCardMarqueeTimer) {
+          clearTimeout(_activeCardMarqueeTimer);
+          _activeCardMarqueeTimer = null;
+        }
         const activeCard = focusedEl && focusedEl.closest ? focusedEl.closest(".card") : null;
-        document.querySelectorAll(".card-title.is-marquee-overflow").forEach(el => {
-          const parentCard = el.closest(".card");
-          if (parentCard && parentCard !== activeCard && !parentCard.matches(":hover")) {
-            deactivateCardTitleMarquee(parentCard);
+        if (_activeMarqueeCardEl && _activeMarqueeCardEl !== activeCard) {
+          try {
+            if (!_activeMarqueeCardEl.matches || !_activeMarqueeCardEl.matches(":hover")) {
+              deactivateCardTitleMarquee(_activeMarqueeCardEl);
+            }
+          } catch (_e) {
+            deactivateCardTitleMarquee(_activeMarqueeCardEl);
           }
-        });
-        if (activeCard) {
-          activateCardTitleMarquee(activeCard);
-          scheduleCardIntentPrewarmClient(activeCard, 60);
+          _activeMarqueeCardEl = null;
         }
         const activeEpRow = focusedEl && focusedEl.closest ? focusedEl.closest(".ep-row, .inline-marquee-wrap") : null;
-        document.querySelectorAll(".ep-name-wrap.is-marquee-overflow, .inline-marquee-wrap.is-marquee-overflow").forEach(el => {
-          if (el.hasAttribute("data-marquee-always")) return;
-          const parentRow = el.closest(".ep-row") || el;
-          if (parentRow !== activeEpRow && !parentRow.matches(":hover")) {
-            deactivateInlineTextMarquee(el);
+        if (_activeMarqueeInlineWraps.length > 0) {
+          const remaining = [];
+          for (let i = 0; i < _activeMarqueeInlineWraps.length; i++) {
+            const wEl = _activeMarqueeInlineWraps[i];
+            if (!wEl || !document.body.contains(wEl)) continue;
+            if (wEl.hasAttribute("data-marquee-always")) continue;
+            const parentRow = wEl.closest ? (wEl.closest(".ep-row") || wEl) : wEl;
+            if (parentRow !== activeEpRow) {
+              let keepHover = false;
+              try { keepHover = Boolean(parentRow.matches && parentRow.matches(":hover")); } catch (_e) {}
+              if (!keepHover) {
+                deactivateInlineTextMarquee(wEl);
+                continue;
+              }
+            }
+            remaining.push(wEl);
           }
-        });
-        if (activeEpRow) {
-          const wraps = activeEpRow.classList && (activeEpRow.classList.contains("ep-name-wrap") || activeEpRow.classList.contains("inline-marquee-wrap"))
-            ? [activeEpRow]
-            : Array.from(activeEpRow.querySelectorAll(".ep-name-wrap, .inline-marquee-wrap"));
-          wraps.forEach(w => activateInlineTextMarquee(w));
+          _activeMarqueeInlineWraps = remaining;
         }
+        if (!activeCard && !activeEpRow) return;
+        const settleDelayMs = (document.body && document.body.getAttribute("data-device") === "tv") ? 190 : 120;
+        _activeCardMarqueeTimer = setTimeout(() => {
+          _activeCardMarqueeTimer = null;
+          if (activeCard && document.body && document.body.contains(activeCard)) {
+            activateCardTitleMarquee(activeCard);
+            _activeMarqueeCardEl = activeCard;
+            scheduleCardIntentPrewarmClient(activeCard, 60);
+          }
+          if (activeEpRow && document.body && document.body.contains(activeEpRow)) {
+            const wraps = activeEpRow.classList && (activeEpRow.classList.contains("ep-name-wrap") || activeEpRow.classList.contains("inline-marquee-wrap"))
+              ? [activeEpRow]
+              : Array.from(activeEpRow.querySelectorAll(".ep-name-wrap, .inline-marquee-wrap"));
+            wraps.forEach(w => {
+              activateInlineTextMarquee(w);
+              if (!_activeMarqueeInlineWraps.includes(w)) {
+                _activeMarqueeInlineWraps.push(w);
+              }
+            });
+          }
+        }, settleDelayMs);
       };
 
       let lastMouseOverCardEl = null;
@@ -3574,57 +3807,59 @@
         clearCardLongPressTimer();
       }, { passive: true });
 
-      // Desktop Mouse Long-Press (~420ms) auf Katalog-Karten zum direkten Speichern/Entfernen in der Merkliste
-      document.addEventListener("mousedown", function(ev) {
-        if (ev.button !== 0) return;
-        if (ev.target && ev.target.closest && ev.target.closest("button, a, select, input")) return;
-        const card = ev.target && ev.target.closest ? ev.target.closest(".card[data-card-key]") : null;
-        if (!card) return;
-        const rawKey = card.getAttribute("data-card-key") || "";
-        const parts = rawKey.split("_");
-        if (parts.length < 2) return;
-        const tc = parts[0] === "s" ? "s" : "m";
-        const idNum = Number(parts[1]);
-        if (!idNum) return;
-        const titleEl = card.querySelector(".card-title");
-        const titleTxt = card.getAttribute("data-card-title") || (titleEl ? titleEl.textContent : "") || "Titel";
+      // Desktop Mouse Long-Press (~420ms) auf Katalog-Karten zum direkten Speichern/Entfernen in der Merkliste (am TV unnötig)
+      if (!(document.body && document.body.getAttribute("data-device") === "tv")) {
+        document.addEventListener("mousedown", function(ev) {
+          if (ev.button !== 0) return;
+          if (ev.target && ev.target.closest && ev.target.closest("button, a, select, input")) return;
+          const card = ev.target && ev.target.closest ? ev.target.closest(".card[data-card-key]") : null;
+          if (!card) return;
+          const rawKey = card.getAttribute("data-card-key") || "";
+          const parts = rawKey.split("_");
+          if (parts.length < 2) return;
+          const tc = parts[0] === "s" ? "s" : "m";
+          const idNum = Number(parts[1]);
+          if (!idNum) return;
+          const titleEl = card.querySelector(".card-title");
+          const titleTxt = card.getAttribute("data-card-title") || (titleEl ? titleEl.textContent : "") || "Titel";
 
-        clearCardLongPressTimer();
-        cardLongPressTriggered = false;
-        cardLongPressStartX = ev.clientX;
-        cardLongPressStartY = ev.clientY;
-        cardLongPressTarget = card;
-
-        cardLongPressTimer = setTimeout(function() {
-          cardLongPressTimer = null;
-          cardLongPressTriggered = true;
-          lastCardLongPressAt = Date.now();
-          if (cardLongPressTarget) {
-            cardLongPressTarget.classList.add("long-press-active");
-            setTimeout(() => {
-              if (card) card.classList.remove("long-press-active");
-            }, 240);
-          }
-          quickToggleCardWishlist(null, tc, idNum, titleTxt);
-        }, 420);
-      });
-
-      document.addEventListener("mousemove", function(ev) {
-        if (!cardLongPressTimer) return;
-        const dx = ev.clientX - cardLongPressStartX;
-        const dy = ev.clientY - cardLongPressStartY;
-        if ((dx * dx + dy * dy) > 256) {
           clearCardLongPressTimer();
-        }
-      });
-
-      document.addEventListener("mouseup", function() {
-        if (cardLongPressTriggered) {
-          lastCardLongPressAt = Date.now();
           cardLongPressTriggered = false;
-        }
-        clearCardLongPressTimer();
-      });
+          cardLongPressStartX = ev.clientX;
+          cardLongPressStartY = ev.clientY;
+          cardLongPressTarget = card;
+
+          cardLongPressTimer = setTimeout(function() {
+            cardLongPressTimer = null;
+            cardLongPressTriggered = true;
+            lastCardLongPressAt = Date.now();
+            if (cardLongPressTarget) {
+              cardLongPressTarget.classList.add("long-press-active");
+              setTimeout(() => {
+                if (card) card.classList.remove("long-press-active");
+              }, 240);
+            }
+            quickToggleCardWishlist(null, tc, idNum, titleTxt);
+          }, 420);
+        }, { passive: true });
+
+        document.addEventListener("mousemove", function(ev) {
+          if (!cardLongPressTimer) return;
+          const dx = ev.clientX - cardLongPressStartX;
+          const dy = ev.clientY - cardLongPressStartY;
+          if ((dx * dx + dy * dy) > 256) {
+            clearCardLongPressTimer();
+          }
+        }, { passive: true });
+
+        document.addEventListener("mouseup", function() {
+          if (cardLongPressTriggered) {
+            lastCardLongPressAt = Date.now();
+            cardLongPressTriggered = false;
+          }
+          clearCardLongPressTimer();
+        }, { passive: true });
+      }
 
       let state = {
         type: "m",
@@ -3764,20 +3999,8 @@
         const key = slType + "_" + sl.id;
         if (heroDetailsOverviewBackfillSet.has(key)) return;
         heroDetailsOverviewBackfillSet.add(key);
-        const vipAllowed = typeof isCurrentUserVip === "function" ? isCurrentUserVip() : false;
-        const detailCacheKey = slType + "_" + sl.id + "_" + (vipAllowed ? "vip" : "std");
-        let det = null;
-        if (typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
-          const hit = clientDetailsCache.get(detailCacheKey);
-          if (hit && hit.data) det = hit.data;
-        }
         try {
-          if (!det) {
-            det = await apiFetchJson(API_BASE + "/details?type=" + slType + "&id=" + encodeURIComponent(sl.id));
-            if (det && det.ok !== false && typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
-              clientDetailsCache.set(detailCacheKey, { data: det, ts: Date.now() });
-            }
-          }
+          const det = await fetchMediaDetailsDedupClient(slType, sl.id);
           const fetchedOv = String(det?.overview || "").trim();
           if (fetchedOv && !isGenericPlaceholderOverviewClient(fetchedOv)) {
             sl.overview = fetchedOv;
@@ -4000,7 +4223,7 @@
           },
           {
             root: null,
-            rootMargin: "120% 0px 120% 0px",
+            rootMargin: (document.body && document.body.getAttribute("data-device") === "tv") ? "45% 0px 45% 0px" : "120% 0px 120% 0px",
             threshold: 0.01
           }
         );
@@ -4008,21 +4231,24 @@
       }
 
       function preloadCatalogPageCoversClient(pageNum) {
+        const isTvMode = Boolean(document.body && document.body.getAttribute("data-device") === "tv");
         const targetPageStr = String(pageNum || state.startPage || 1);
         const imgs = Array.from(
           document.querySelectorAll(
             '#resultsGridContainer img.lazy-cover-img[data-lazy-src][data-page-num="' + targetPageStr + '"]'
           )
         );
-        const listToLoad = imgs.length > 0
+        const rawList = imgs.length > 0
           ? imgs
           : Array.from(document.querySelectorAll("#resultsGridContainer img.lazy-cover-img[data-lazy-src]")).slice(0, 20);
+        const listToLoad = isTvMode ? rawList.slice(0, 8) : rawList;
         if (!listToLoad.length) return;
+        const batchSize = isTvMode ? 4 : 8;
         let idx = 0;
         const loadBatch = () => {
           if (!catalogCoversUnlocked) return;
-          const slice = listToLoad.slice(idx, idx + 8);
-          idx += 8;
+          const slice = listToLoad.slice(idx, idx + batchSize);
+          idx += batchSize;
           for (const img of slice) {
             hydrateLazyCoverImageClient(img);
           }
@@ -4090,25 +4316,43 @@
         }
       }
 
+      const _observedLazyCoverImgs = typeof WeakSet !== "undefined" ? new WeakSet() : null;
+
       function observeLazyCoversInContainerClient(rootEl) {
         const scope = rootEl || document;
         if (!scope || typeof scope.querySelectorAll !== "function") return;
         const obs = ensureLazyCoverIntersectionObserverClient();
-        const imgs = Array.from(scope.querySelectorAll("img.lazy-cover-img[data-lazy-src]"));
+        const imgs = scope.querySelectorAll("img.lazy-cover-img[data-lazy-src]");
         if (!obs) {
-          imgs.forEach((img) => hydrateLazyCoverImageClient(img));
+          for (let i = 0; i < imgs.length; i++) hydrateLazyCoverImageClient(imgs[i]);
           return;
         }
-        imgs.forEach((img) => obs.observe(img));
+        for (let i = 0; i < imgs.length; i++) {
+          const img = imgs[i];
+          if (_observedLazyCoverImgs) {
+            if (_observedLazyCoverImgs.has(img)) continue;
+            _observedLazyCoverImgs.add(img);
+          }
+          obs.observe(img);
+        }
       }
+
+      let _observedInfiniteSentinelEl = null;
 
       function ensureInfiniteScrollSentinelObserverClient() {
         if (typeof IntersectionObserver === "undefined") return;
+        const sentinelEl = document.getElementById("infiniteScrollSentinel");
+        if (!sentinelEl) {
+          if (infiniteScrollSentinelObserver) infiniteScrollSentinelObserver.disconnect();
+          _observedInfiniteSentinelEl = null;
+          return;
+        }
+        if (infiniteScrollSentinelObserver && _observedInfiniteSentinelEl === sentinelEl) {
+          return;
+        }
         if (infiniteScrollSentinelObserver) {
           infiniteScrollSentinelObserver.disconnect();
         }
-        const sentinelEl = document.getElementById("infiniteScrollSentinel");
-        if (!sentinelEl) return;
         infiniteScrollSentinelObserver = new IntersectionObserver(
           (entries) => {
             for (const entry of entries) {
@@ -4129,8 +4373,12 @@
             threshold: 0.01
           }
         );
+        _observedInfiniteSentinelEl = sentinelEl;
         infiniteScrollSentinelObserver.observe(sentinelEl);
       }
+
+      let catalogPageTrackObservedGridEl = null;
+      const catalogPageTrackObservedPages = new Set();
 
       function ensureCatalogPageTrackObserverClient(rootEl) {
         if (typeof IntersectionObserver === "undefined") return;
@@ -4162,8 +4410,32 @@
         }
         const scope = rootEl || document.getElementById("resultsGridContainer");
         if (!scope || typeof scope.querySelectorAll !== "function") return;
+        if (scope !== catalogPageTrackObservedGridEl) {
+          catalogPageTrackObserver.disconnect();
+          catalogPageTrackObservedGridEl = scope;
+          catalogPageTrackObservedPages.clear();
+        }
+        // Pro Katalog-Seite nur erste & letzte Anker-Karte beobachten (statt alle 20+ Karten) -> ~90 % weniger Observer-Last beim TV-Scrollen
         const cards = scope.querySelectorAll(".card[data-page-num]");
-        cards.forEach((c) => catalogPageTrackObserver.observe(c));
+        const pageBounds = new Map();
+        for (let i = 0; i < cards.length; i++) {
+          const card = cards[i];
+          const pNum = Number(card.getAttribute("data-page-num") || 0);
+          if (!pNum || catalogPageTrackObservedPages.has(pNum)) continue;
+          const entry = pageBounds.get(pNum);
+          if (!entry) {
+            pageBounds.set(pNum, { first: card, last: card });
+          } else {
+            entry.last = card;
+          }
+        }
+        pageBounds.forEach((bounds, pNum) => {
+          catalogPageTrackObservedPages.add(pNum);
+          catalogPageTrackObserver.observe(bounds.first);
+          if (bounds.last && bounds.last !== bounds.first) {
+            catalogPageTrackObserver.observe(bounds.last);
+          }
+        });
       }
 
       let lastPageIndicatorDomSig = "";
@@ -4301,7 +4573,7 @@
           if (typeof jumpSpatialFocus === "function") {
             jumpSpatialFocus(firstCardOnPage, true);
           } else {
-            firstCardOnPage.scrollIntoView({ behavior: "smooth", block: "start" });
+            firstCardOnPage.scrollIntoView({ behavior: typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth", block: "start" });
           }
           return;
         }
@@ -4421,10 +4693,12 @@
         await preloadHeroSlideAssetsPairClient(slidesSnapshot[0], true);
         if (mySeq !== heroWaterfallSeq) return;
 
-        // Stufe 2: Ab Slide 2 parallel die komplette 1. Seite der Katalog-Cover vorladen + IntersectionObserver freischalten,
-        // während Slide 2 -> Slide 3 -> ... nacheinander im Hintergrund geladen werden!
+        // Stufe 2: Ab Slide 2 parallel die sichtbaren Katalog-Cover vorladen + IntersectionObserver freischalten,
+        // während weitere Slides nacheinander geladen werden (auf Android TV max. 2 Slides vorladen für RAM/GPU-Schonung).
         unlockCatalogCoversLoadingClient(true);
-        for (let i = 1; i < slidesSnapshot.length; i++) {
+        const isTvMode = Boolean(document.body && document.body.getAttribute("data-device") === "tv");
+        const maxWaterfallSlides = isTvMode ? Math.min(slidesSnapshot.length, 2) : slidesSnapshot.length;
+        for (let i = 1; i < maxWaterfallSlides; i++) {
           if (mySeq !== heroWaterfallSeq) return;
           await preloadHeroSlideAssetsPairClient(slidesSnapshot[i], false);
         }
@@ -4514,13 +4788,14 @@
           window.matchMedia &&
           window.matchMedia("(prefers-reduced-motion: reduce)").matches
         );
-        if (prefersReduced || durationMs <= 0) {
-          scrollEl.scrollTop = clampedTarget;
-          return;
-        }
+        const isTvSnap = Boolean(document.body && document.body.getAttribute("data-device") === "tv");
         if (smoothContainerScrollRafMap && smoothContainerScrollRafMap.has(scrollEl)) {
           cancelAnimationFrame(smoothContainerScrollRafMap.get(scrollEl));
           smoothContainerScrollRafMap.delete(scrollEl);
+        }
+        if (prefersReduced || isTvSnap || durationMs <= 0) {
+          scrollEl.scrollTop = clampedTarget;
+          return;
         }
         const startTime = performance.now();
         const step = (now) => {
@@ -4555,7 +4830,8 @@
         const isCollapsed = Boolean(state.heroHidden);
         const isScrolledPast = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
         const showCompactSpotlightHint = isCollapsed || isScrolledPast;
-        if (hideBtn) {
+        if (hideBtn && hideBtn._lastCollapsed !== showCompactSpotlightHint) {
+          hideBtn._lastCollapsed = showCompactSpotlightHint;
           hideBtn.classList.toggle("is-collapsed-state", showCompactSpotlightHint);
           hideBtn.setAttribute("aria-expanded", showCompactSpotlightHint ? "false" : "true");
           hideBtn.setAttribute(
@@ -4574,12 +4850,16 @@
         const onHeroCapableView = (!state.currentView || state.currentView === "discover") && !state.isSearchMode;
         if (showCompactSpotlightHint && onHeroCapableView && Array.isArray(state.heroSlides) && state.heroSlides.length > 0) {
           const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
-          inp.placeholder = formatCollapsedHeroSearchPlaceholderClient(hero, compactPill);
+          const nextPh = formatCollapsedHeroSearchPlaceholderClient(hero, compactPill);
+          if (inp.placeholder !== nextPh) inp.placeholder = nextPh;
           inp.classList.add("hero-placeholder-active");
-          const bpUrl = resolveHeroSlideBackdropUrlClient(hero);
-          if (bpUrl) applyDynamicHeroAmbilightClient(bpUrl);
+          if (!(document.body && document.body.getAttribute("data-device") === "tv")) {
+            const bpUrl = resolveHeroSlideBackdropUrlClient(hero);
+            if (bpUrl) applyDynamicHeroAmbilightClient(bpUrl);
+          }
         } else {
-          inp.placeholder = compactPill ? "Suchen…" : "Film, Serie, Studio, Person oder (Jahr)...";
+          const defaultPh = compactPill ? "Suchen…" : "Film, Serie, Studio, Person oder (Jahr)...";
+          if (inp.placeholder !== defaultPh) inp.placeholder = defaultPh;
           inp.classList.remove("hero-placeholder-active");
         }
       }
@@ -4666,34 +4946,42 @@
       function isHeroScrollCouplingActiveClient() {
         if (!isHeroStageAvailableForCurrentViewClient()) return false;
         if (isAnySideMenuOpenClient()) return false;
-        if (document.getElementById("modalRoot")?.innerHTML.trim()) return false;
-        if (document.getElementById("lightboxRoot")?.innerHTML.trim()) return false;
-        if (document.getElementById("customDialogRoot")?.innerHTML.trim()) return false;
+        if (document.getElementById("modalRoot")?.firstElementChild) return false;
+        if (document.getElementById("lightboxRoot")?.firstElementChild) return false;
+        if (document.getElementById("customDialogRoot")?.firstElementChild) return false;
         if (document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open")) return false;
         if (document.getElementById("searchAutocompleteBox")?.classList.contains("open")) return false;
         return true;
       }
 
-      // Echte DOM-Überlaufmessung für 3-Zeilen-Clamp: "▾ Mehr lesen" erscheint NUR, wenn Text wirklich abgeschnitten ist
+      // Echte DOM-Überlaufmessung für 3-Zeilen-Clamp: erst alle Messungen lesen, dann gebündelt schreiben (kein Layout-Thrashing)
       function syncExpandableDescriptionsOverflowClient(rootEl) {
         const scope = rootEl || document;
         if (!scope) return;
         const boxes = (scope.classList && scope.classList.contains("expandable-desc-box"))
           ? [scope]
           : Array.from(scope.querySelectorAll ? scope.querySelectorAll(".expandable-desc-box") : []);
-        for (const box of boxes) {
+        if (!boxes.length) return;
+        const measurements = [];
+        for (let i = 0; i < boxes.length; i++) {
+          const box = boxes[i];
           const scrollEl = box.querySelector(".expandable-desc-scroll");
           if (!scrollEl) continue;
-          if (box.classList.contains("is-expanded")) {
-            box.classList.add("is-long-desc");
+          const isExpanded = box.classList.contains("is-expanded");
+          const isTruncated = isExpanded ? true : ((scrollEl.scrollHeight - scrollEl.clientHeight) > 2);
+          measurements.push({ box, isExpanded, isTruncated });
+        }
+        for (let i = 0; i < measurements.length; i++) {
+          const m = measurements[i];
+          if (m.isExpanded) {
+            m.box.classList.add("is-long-desc");
             continue;
           }
-          const isTruncated = (scrollEl.scrollHeight - scrollEl.clientHeight) > 2;
-          box.classList.toggle("is-long-desc", isTruncated);
-          if (isTruncated) {
-            box.setAttribute("title", "Klicken oder Enter für vollständige Beschreibung");
+          m.box.classList.toggle("is-long-desc", m.isTruncated);
+          if (m.isTruncated) {
+            m.box.setAttribute("title", "Klicken oder Enter für vollständige Beschreibung");
           } else {
-            box.removeAttribute("title");
+            m.box.removeAttribute("title");
           }
         }
       }
@@ -4837,6 +5125,9 @@
         }
 
         if (goingToCatalog) {
+          if (typeof stopHeroRotationTimer === "function") {
+            stopHeroRotationTimer();
+          }
           if (typeof stopHeroBackgroundVideoTeaserClient === "function") {
             stopHeroBackgroundVideoTeaserClient();
           }
@@ -4877,6 +5168,9 @@
           }
           syncSmartPageIndicatorDomClient(false);
           requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient());
+          if (typeof startHeroRotationTimer === "function") {
+            startHeroRotationTimer();
+          }
           if (typeof scheduleHeroBackgroundVideoTeaserClient === "function") {
             scheduleHeroBackgroundVideoTeaserClient(false);
           }
@@ -5133,11 +5427,17 @@
         const y = window.scrollY || window.pageYOffset || 0;
         document.body.classList.toggle("catalog-deep-scrolled", y > 420);
         const stageWrap = document.getElementById("heroStageWrapEl");
+        const setStageVarIfChanged = (el, prop, val) => {
+          if (!el || !el.style) return;
+          if (el.style.getPropertyValue(prop) !== val) {
+            el.style.setProperty(prop, val);
+          }
+        };
         if (!stageWrap || !isHeroStageAvailableForCurrentViewClient()) {
           document.body.classList.toggle("page-scrolled", y > 10);
           if (stageWrap) {
-            stageWrap.style.setProperty("--hero-scroll-fade", "0");
-            stageWrap.style.setProperty("--hero-rubber-y", "0px");
+            setStageVarIfChanged(stageWrap, "--hero-scroll-fade", "0");
+            setStageVarIfChanged(stageWrap, "--hero-rubber-y", "0px");
           }
           if (document.body.classList.contains("hero-scrolled-past")) {
             document.body.classList.remove("hero-scrolled-past");
@@ -5154,7 +5454,7 @@
             document.body.classList.add("hero-scrolled-past");
             syncHeroSearchPlaceholderAndToggleBtnClient();
           }
-          stageWrap.style.setProperty("--hero-scroll-fade", "0");
+          setStageVarIfChanged(stageWrap, "--hero-scroll-fade", "0");
           return;
         }
 
@@ -5168,7 +5468,7 @@
         if (typeof syncCatalogFocusInfoBarClient === "function") {
           syncCatalogFocusInfoBarClient(null);
         }
-        stageWrap.style.setProperty("--hero-scroll-fade", "0");
+        setStageVarIfChanged(stageWrap, "--hero-scroll-fade", "0");
       }
 
       function returnToHeroSpotlightFromCatalogClient(ev) {
@@ -5186,7 +5486,7 @@
         triggerTmaHapticClient("light");
         const y = window.scrollY || window.pageYOffset || 0;
         if (y > 60) {
-          window.scrollTo({ top: 0, behavior: "smooth" });
+          window.scrollTo({ top: 0, behavior: typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth" });
         } else {
           returnToHeroSpotlightFromCatalogClient(ev);
         }

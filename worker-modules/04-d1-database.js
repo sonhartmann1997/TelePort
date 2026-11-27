@@ -204,6 +204,9 @@
     memoryFallback.delete("d1_admin_media_list_cache_m");
     memoryFallback.delete("d1_admin_media_list_cache_s");
     memoryFallback.delete("d1_db_stats_cache");
+    for (const k of memoryFallback.keys()) {
+      if (k.startsWith("d1_all_ep_files_")) memoryFallback.delete(k);
+    }
     const rawDb = getRawD1Binding(env);
     if (!rawDb) return 0;
     let flushedCount = 0;
@@ -3220,6 +3223,7 @@
       );
       await db.batch(stmts);
       memoryFallback.delete(`d1_vip_summary_s_${sid}`);
+      memoryFallback.delete(`d1_all_ep_files_${sid}`);
       memoryFallback.delete("d1_vip_discover_cache_s");
       memoryFallback.delete("d1_admin_media_list_cache_s");
       return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
@@ -5412,6 +5416,7 @@
     if (Array.isArray(existingMem)) {
       memoryFallback.set(memKey, existingMem.filter(x => Number(x?.episode_number || 1) <= maxEp));
     }
+    memoryFallback.delete(`d1_all_ep_files_${sid}`);
 
     const db = await ensureD1Schema(env);
     if (!db) return;

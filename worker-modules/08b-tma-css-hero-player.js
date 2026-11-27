@@ -1066,10 +1066,15 @@
         align-items: center;
         gap: 5px;
       }
-      .ff-controls-grid > .btn:hover,
-      .ff-controls-grid > .btn.spatial-focus {
+      .ff-controls-grid > .btn:hover {
         background: rgba(14, 165, 233, 0.18);
         border-color: rgba(56, 189, 248, 0.65);
+        color: #ffffff;
+      }
+      .ff-controls-grid > .btn.spatial-focus {
+        background: rgba(14, 165, 233, 0.28);
+        border-color: #38bdf8;
+        box-shadow: 0 0 0 2.5px #38bdf8, 0 0 14px rgba(56, 189, 248, 0.38);
         color: #ffffff;
       }
       @media (max-width: 640px) {
@@ -1133,15 +1138,20 @@
         color: #f8fafc;
       }
       .sort-select:hover,
-      .sort-select.spatial-focus,
       .mode-filter-select:hover,
-      .mode-filter-select.spatial-focus,
       .mode-filter-select.active-mode,
       .new-filter-select:hover,
-      .new-filter-select.spatial-focus,
       .new-filter-select.active-new {
         border-color: rgba(56, 189, 248, 0.58);
         background-color: rgba(14, 165, 233, 0.14);
+        color: #ffffff;
+      }
+      .sort-select.spatial-focus,
+      .mode-filter-select.spatial-focus,
+      .new-filter-select.spatial-focus {
+        border-color: #38bdf8;
+        background-color: rgba(14, 165, 233, 0.28);
+        box-shadow: 0 0 0 2.5px #38bdf8, 0 0 14px rgba(56, 189, 248, 0.42);
         color: #ffffff;
       }
 
@@ -1304,6 +1314,17 @@
         transform: translateY(-4px);
         box-shadow: 0 0 0 2.5px #38bdf8, 0 14px 28px rgba(0, 0, 0, 0.62);
       }
+      .grid .card,
+      .carousel .card {
+        content-visibility: auto;
+        contain-intrinsic-size: auto 245px;
+      }
+      .grid .card.spatial-focus,
+      .grid .card:hover,
+      .carousel .card.spatial-focus,
+      .carousel .card:hover {
+        content-visibility: visible;
+      }
       .card.spatial-focus {
         z-index: 12;
       }
@@ -1371,10 +1392,9 @@
         font-weight: 800;
         padding: 2px 6px;
         border-radius: 6px;
-        background: rgba(10, 14, 24, 0.86);
-        backdrop-filter: blur(8px);
+        background: rgba(10, 14, 24, 0.9);
         color: #fff;
-        border: 1px solid rgba(255,255,255,0.18);
+        border: 1px solid rgba(255,255,255,0.2);
         pointer-events: auto;
       }
       /* Minimaler grüner VIP-Punkt oben links auf dem Cover */
@@ -1397,10 +1417,8 @@
         width: 28px;
         height: 28px;
         border-radius: 999px;
-        background: rgba(10, 15, 28, 0.76);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(10, 15, 28, 0.88);
+        border: 1px solid rgba(255, 255, 255, 0.24);
         color: #fff;
         font-size: 12px;
         display: inline-flex;
@@ -1421,10 +1439,8 @@
         width: 30px;
         height: 30px;
         border-radius: 999px;
-        background: rgba(8, 13, 26, 0.82);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.26);
+        background: rgba(8, 13, 26, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.28);
         color: #ffffff;
         display: inline-flex;
         align-items: center;
@@ -5491,6 +5507,102 @@
         background: rgba(10, 6, 24, 0.95);
         border-color: rgba(0, 240, 255, 0.55);
       }
+      /* Android TV / Fire TV Lite-GPU Performance-Profil: deaktiviert teure Blur-Ebenen & Karten-Zooms für 60fps D-Pad-Navigation */
+      body[data-device="tv"] *,
+      body[data-device="tv"] *::before,
+      body[data-device="tv"] *::after {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+      }
+      body[data-device="tv"]:not([data-theme="light"]) header,
+      body[data-device="tv"]:not([data-theme="light"]) .sidebar-drawer,
+      body[data-device="tv"]:not([data-theme="light"]) .sidebar-right-subpanel,
+      body[data-device="tv"]:not([data-theme="light"]) .floating-filter-bar,
+      body[data-device="tv"]:not([data-theme="light"]) .catalog-focus-info-bar,
+      body[data-device="tv"]:not([data-theme="light"]) .modal-backdrop,
+      body[data-device="tv"]:not([data-theme="light"]) .lightbox-backdrop,
+      body[data-device="tv"]:not([data-theme="light"]) .tv-quick-jump-elevator,
+      body[data-device="tv"]:not([data-theme="light"]) #tvSofaRemoteDock {
+        background-color: rgba(8, 13, 26, 0.96);
+      }
+      body[data-device="tv"][data-theme="light"] header,
+      body[data-device="tv"][data-theme="light"] .sidebar-drawer,
+      body[data-device="tv"][data-theme="light"] .sidebar-right-subpanel,
+      body[data-device="tv"][data-theme="light"] .floating-filter-bar,
+      body[data-device="tv"][data-theme="light"] .catalog-focus-info-bar,
+      body[data-device="tv"][data-theme="light"] .tv-quick-jump-elevator,
+      body[data-device="tv"][data-theme="light"] #tvSofaRemoteDock {
+        background-color: rgba(248, 250, 252, 0.97);
+      }
+      body[data-device="tv"] .card {
+        animation: none !important;
+      }
+      body[data-device="tv"] .card-poster-wrap {
+        box-shadow: none !important;
+        transition: border-color 75ms linear, transform 75ms linear !important;
+      }
+      body[data-device="tv"] .card-poster-wrap img {
+        transition: opacity 0.14s ease !important;
+      }
+      body[data-device="tv"] .card.spatial-focus .card-poster-wrap {
+        transform: translateY(-2px);
+        box-shadow: 0 0 0 2.5px #38bdf8 !important;
+      }
+      body[data-device="tv"] .card.spatial-focus .card-poster-wrap img {
+        transform: none !important;
+      }
+      body[data-device="tv"] .hero-curtain-shell,
+      body[data-device="tv"] #heroBannerSlot + .section,
+      body[data-device="tv"] .hero-scroll-dim-overlay,
+      body[data-device="tv"] .hero-backdrop-layer,
+      body[data-device="tv"] .hero-inner,
+      body[data-device="tv"] .detail-backdrop-layer {
+        will-change: auto !important;
+      }
+      body[data-device="tv"] .hero-curtain-shell {
+        transition: none !important;
+      }
+      body[data-device="tv"] #heroBannerSlot + .section {
+        transform: none !important;
+        transition: opacity 0.14s linear !important;
+      }
+      body[data-device="tv"] .detail-backdrop-layer.is-ken-burns-active {
+        animation: none !important;
+        transform: none !important;
+      }
+      body[data-device="tv"] .hero-scroll-down-chevron {
+        animation: none !important;
+      }
+      body[data-device="tv"] .detail-cast-track,
+      body[data-device="tv"] .detail-similar-track {
+        scroll-behavior: auto !important;
+      }
+      body[data-device="tv"] .detail-cast-card,
+      body[data-device="tv"] .detail-sim-card {
+        box-shadow: none !important;
+        transition: border-color 75ms linear, transform 75ms linear !important;
+      }
+      body[data-device="tv"] .detail-cast-card.spatial-focus,
+      body[data-device="tv"] .detail-sim-card.spatial-focus {
+        box-shadow: 0 0 0 2px #38bdf8 !important;
+      }
+      body[data-device="tv"] .detail-cast-photo,
+      body[data-device="tv"] .detail-cast-card.spatial-focus .detail-cast-photo {
+        transition: none !important;
+        transform: none !important;
+      }
+      .ep-row {
+        content-visibility: auto;
+        contain-intrinsic-size: auto 74px;
+      }
+      body[data-device="tv"] .ep-row {
+        box-shadow: none !important;
+        transition: border-color 75ms linear !important;
+      }
+      body[data-device="tv"] .ep-row:focus-within {
+        box-shadow: none !important;
+        transform: none !important;
+      }
     </style>
     <!-- @TMA_STATIC_CSS_END -->
   </head>
@@ -5498,15 +5610,8 @@
     <div id="tmaBootSplashscreen" onclick="dismissBootSplashscreen()" title="Antippen zum Überspringen">
       <div class="neon-splash-card">
         <div class="neon-splash-avatar-wrap">
-          <img
-            class="neon-splash-avatar-img"
-            src="/src/assets/images/telegram_bot_avatar_neon_1794251893026.jpg"
-            alt="TelePort Neon Cinema Logo"
-            referrerPolicy="no-referrer"
-            onerror="if(!this.dataset.triedAlt){this.dataset.triedAlt='1';this.src='/assets/telegram_bot_avatar_neon.jpg';}else{this.style.display='none';this.nextElementSibling.style.display='flex';}"
-          />
-          <div style="display:none;width:100%;height:100%;border-radius:50%;background:#070b19;align-items:center;justify-content:center">
-            <svg width="64" height="64" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <div style="display:flex;width:100%;height:100%;border-radius:50%;background:radial-gradient(circle at 35% 30%,#131e3a 0%,#070b19 72%);align-items:center;justify-content:center">
+            <svg width="68" height="68" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="TelePort Neon Cinema Logo">
               <circle cx="14" cy="14" r="11.5" stroke="#00f0ff" stroke-width="2.2" stroke-dasharray="18 5"/>
               <circle cx="14" cy="14" r="7.5" stroke="#8b5cf6" stroke-width="1.5"/>
               <path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="#00f0ff"/>

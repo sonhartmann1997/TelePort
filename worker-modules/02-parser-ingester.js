@@ -2435,7 +2435,12 @@
       // Geheimnisse (api_key, session_id) niemals im öffentlichen Edge-Cache-Key speichern
       u.searchParams.delete("api_key");
       u.searchParams.delete("session_id");
-      return new Request(u.toString(), { method: "GET" });
+      const canonicalExternalUrl = u.toString();
+      const workerOrigin = typeof getActiveWorkerOrigin === "function" ? String(getActiveWorkerOrigin() || "").trim() : "";
+      if (workerOrigin && workerOrigin.startsWith("https://") && u.origin !== workerOrigin) {
+        return new Request(`${workerOrigin}/__edge_cache/ext/v1?u=${encodeURIComponent(canonicalExternalUrl)}`, { method: "GET" });
+      }
+      return new Request(canonicalExternalUrl, { method: "GET" });
     } catch (_e) {
       return null;
     }

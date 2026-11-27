@@ -56,11 +56,11 @@
           (state && state.sidebarOpen) ||
           isRightOverlayOpen ||
           isManualNoTmdbModalOpenClient() ||
-          document.getElementById("subModalOverlayRoot")?.innerHTML.trim() ||
-          document.getElementById("modalRoot")?.innerHTML.trim() ||
-          document.getElementById("customDialogRoot")?.innerHTML.trim() ||
-          document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
-          document.getElementById("lightboxRoot")?.innerHTML.trim() ||
+          document.getElementById("subModalOverlayRoot")?.firstElementChild ||
+          document.getElementById("modalRoot")?.firstElementChild ||
+          document.getElementById("customDialogRoot")?.firstElementChild ||
+          document.getElementById("personSpotlightOverlayRoot")?.firstElementChild ||
+          document.getElementById("lightboxRoot")?.firstElementChild ||
           document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
           document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
           document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded")
@@ -170,7 +170,18 @@
         }, safeMs);
       }
 
+      let catalogFocusBarSyncTimer = null;
+      let catalogFocusBarSyncRaf = 0;
+
       function syncCatalogFocusInfoBarClient(explicitCardEl = undefined) {
+        if (catalogFocusBarSyncTimer) {
+          clearTimeout(catalogFocusBarSyncTimer);
+          catalogFocusBarSyncTimer = null;
+        }
+        if (catalogFocusBarSyncRaf && typeof cancelAnimationFrame === "function") {
+          cancelAnimationFrame(catalogFocusBarSyncRaf);
+          catalogFocusBarSyncRaf = 0;
+        }
         const bar = document.getElementById("catalogFocusInfoBar");
         if (!bar) return;
         if (!catalogFocusBarHoverBound) {
@@ -301,15 +312,29 @@
         const vipDotHtml = meta.vip ? '<span class="cfi-vip-dot" title="VIP: ' + esc(meta.vip) + '"></span>' : '';
         const savedMarkHtml = meta.isSaved ? '<span class="cfi-saved-mark" title="In Merkliste">✓</span>' : '';
 
-        bar.classList.toggle("is-title-only", !showShortcutsNow);
-        bar.innerHTML =
-          '<div class="cfi-left">' +
-            vipDotHtml +
-            '<span class="cfi-title">' + esc(meta.title) + '</span>' +
-            (metaParts.length ? ('<span class="cfi-meta">' + metaParts.join('<span>·</span>') + '</span>') : '') +
-            savedMarkHtml +
-          '</div>' +
-          (showShortcutsNow ? ('<span class="cfi-divider"></span><div class="cfi-hints">' + hintsHtml + '</div>') : '');
+        const nextRenderSig =
+          (showShortcutsNow ? "1" : "0") + "|" +
+          profile + "|" +
+          (meta.key || "") + "|" +
+          (meta.title || "") + "|" +
+          (meta.rating || "") + "|" +
+          (meta.year || "") + "|" +
+          (meta.mediaLabel || "") + "|" +
+          (meta.vip || "") + "|" +
+          (meta.isSaved ? "1" : "0");
+
+        if (bar._lastRenderSig !== nextRenderSig) {
+          bar._lastRenderSig = nextRenderSig;
+          bar.classList.toggle("is-title-only", !showShortcutsNow);
+          bar.innerHTML =
+            '<div class="cfi-left">' +
+              vipDotHtml +
+              '<span class="cfi-title">' + esc(meta.title) + '</span>' +
+              (metaParts.length ? ('<span class="cfi-meta">' + metaParts.join('<span>·</span>') + '</span>') : '') +
+              savedMarkHtml +
+            '</div>' +
+            (showShortcutsNow ? ('<span class="cfi-divider"></span><div class="cfi-hints">' + hintsHtml + '</div>') : '');
+        }
 
         bar.classList.add("visible");
         if (!showShortcutsNow && (cardEl !== prevCardEl || !catalogFocusBarFadeTimer)) {
@@ -317,6 +342,31 @@
         }
         const ctrlHud = document.getElementById("controllerHudBar");
         if (ctrlHud) ctrlHud.classList.remove("visible");
+      }
+
+      function scheduleCatalogFocusInfoBarSyncClient() {
+        if (catalogFocusBarSyncTimer) {
+          clearTimeout(catalogFocusBarSyncTimer);
+          catalogFocusBarSyncTimer = null;
+        }
+        if (catalogFocusBarSyncRaf && typeof cancelAnimationFrame === "function") {
+          cancelAnimationFrame(catalogFocusBarSyncRaf);
+          catalogFocusBarSyncRaf = 0;
+        }
+        const isTvMode = Boolean(document.body && document.body.getAttribute("data-device") === "tv");
+        if (isTvMode) {
+          catalogFocusBarSyncTimer = setTimeout(() => {
+            catalogFocusBarSyncTimer = null;
+            syncCatalogFocusInfoBarClient();
+          }, 60);
+        } else if (typeof requestAnimationFrame === "function") {
+          catalogFocusBarSyncRaf = requestAnimationFrame(() => {
+            catalogFocusBarSyncRaf = 0;
+            syncCatalogFocusInfoBarClient();
+          });
+        } else {
+          syncCatalogFocusInfoBarClient();
+        }
       }
 
       function getActiveForegroundCinemaContextClient() {
@@ -328,16 +378,16 @@
           (state && state.sidebarOpen) ||
           isRightOverlayOpen ||
           isManualNoTmdbModalOpenClient() ||
-          document.getElementById("subModalOverlayRoot")?.innerHTML.trim() ||
+          document.getElementById("subModalOverlayRoot")?.firstElementChild ||
           document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
           document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
           document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded") ||
-          document.getElementById("customDialogRoot")?.innerHTML.trim() ||
-          document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
-          document.getElementById("lightboxRoot")?.innerHTML.trim()
+          document.getElementById("customDialogRoot")?.firstElementChild ||
+          document.getElementById("personSpotlightOverlayRoot")?.firstElementChild ||
+          document.getElementById("lightboxRoot")?.firstElementChild
         );
         if (isBlockedByOverlay) return null;
-        const modalHasContent = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
+        const modalHasContent = Boolean(document.getElementById("modalRoot")?.firstElementChild);
         if (modalHasContent) {
           const detailStage = document.getElementById("detailHeroStageEl");
           if (detailStage && detailStage.classList.contains("is-trailer-foreground-mode")) {
@@ -603,6 +653,29 @@
         return true;
       }
 
+      let spatialTickRectCache = null;
+      let spatialTickRectCacheTs = 0;
+
+      function getCachedSpatialRect(el) {
+        if (!el) return { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
+        const now = Date.now();
+        if (!spatialTickRectCache || (now - spatialTickRectCacheTs) > 45) {
+          spatialTickRectCache = new WeakMap();
+          spatialTickRectCacheTs = now;
+        }
+        let r = spatialTickRectCache.get(el);
+        if (!r) {
+          r = el.getBoundingClientRect();
+          spatialTickRectCache.set(el, r);
+        }
+        return r;
+      }
+
+      function invalidateSpatialTickRectCache() {
+        spatialTickRectCache = null;
+        spatialTickRectCacheTs = 0;
+      }
+
       function getVisibleFocusables() {
         const activeCinemaCtx = getActiveForegroundCinemaContextClient();
         if (activeCinemaCtx) {
@@ -616,17 +689,18 @@
         const topUnifiedHeader = document.getElementById("topUnifiedBar");
         const lbEl = document.getElementById("lightboxRoot");
         const sidebarEl = document.getElementById("filterSidebarDrawer");
+        const resultsGridEl = document.getElementById("resultsGridContainer");
         const isManual900mActive = isManualNoTmdbModalOpenClient();
-        const isSubModalActive = Boolean(subModalEl && subModalEl.innerHTML.trim());
-        const isSpotlightActive = Boolean(spotlightEl && spotlightEl.innerHTML.trim());
-        const isModalActive = Boolean(modalEl && modalEl.innerHTML.trim());
-        const scopeRoot = (dialogEl && dialogEl.innerHTML.trim())
+        const isSubModalActive = Boolean(subModalEl && subModalEl.firstElementChild);
+        const isSpotlightActive = Boolean(spotlightEl && spotlightEl.firstElementChild);
+        const isModalActive = Boolean(modalEl && modalEl.firstElementChild);
+        const scopeRoot = (dialogEl && dialogEl.firstElementChild)
           ? dialogEl
           : isManual900mActive
             ? manual900mEl
             : isSubModalActive
               ? subModalEl
-              : (lbEl && lbEl.innerHTML.trim())
+              : (lbEl && lbEl.firstElementChild)
                 ? lbEl
                 : isSpotlightActive
                   ? spotlightEl
@@ -635,33 +709,48 @@
                     : isModalActive
                       ? modalEl
                       : document.body;
-        const rawNodes = Array.from(scopeRoot.querySelectorAll(FOCUSABLE_SELECTOR));
+        let nodes = Array.from(scopeRoot.querySelectorAll(FOCUSABLE_SELECTOR));
         if (scopeRoot === modalEl && !state.sidebarOpen && topUnifiedHeader) {
           const headerNodes = Array.from(topUnifiedHeader.querySelectorAll(FOCUSABLE_SELECTOR));
-          rawNodes.unshift(...headerNodes);
+          if (headerNodes.length > 0) {
+            nodes = Array.from(new Set([...headerNodes, ...nodes]));
+          }
         }
-        const nodes = Array.from(new Set(rawNodes));
+        const resultsGridVisible = Boolean(resultsGridEl && resultsGridEl.offsetParent !== null);
+        const isModalScope = scopeRoot === modalEl;
         return nodes.filter(el => {
           if (el.disabled) return false;
           if (!state.sidebarOpen && sidebarEl && sidebarEl.contains(el)) return false;
+          const cl = el.classList;
+          const isGridCard = Boolean(cl && cl.contains("card") && resultsGridEl && resultsGridEl.contains(el));
+          if (isGridCard) {
+            if (!resultsGridVisible) return false;
+            return el.style.display !== "none" && !el.hidden;
+          }
+          if (isModalScope && cl && (cl.contains("detail-cast-card") || cl.contains("detail-sim-card") || cl.contains("ep-title"))) {
+            if (el.style.display === "none" || el.hidden) return false;
+            const mr = getCachedSpatialRect(el);
+            return mr.width > 4 && mr.height > 4;
+          }
           if (el.closest && el.closest(".hero-curtain-shell.is-collapsed")) return false;
           if (el.closest && el.closest(".detail-sticky-mini-header:not(.is-visible)")) return false;
           // Player-Controls, Top-HUD, Pause- & Endcard-Overlays dürfen NUR fokussierbar sein, wenn der Trailer-Player im Vordergrund aktiv ist!
           if (el.closest && el.closest(".detail-cinema-player-dock, .hero-cinema-player-dock, .cinema-top-hud, .cinema-pause-bottom-curtain, .cinema-end-overlay")) return false;
-          if (el.classList && (el.classList.contains("cinema-dock-btn") || el.classList.contains("cinema-dock-scrubber") || el.classList.contains("cinema-vol-step-btn") || el.classList.contains("cinema-top-hud-close") || el.classList.contains("cinema-pause-center-btn") || el.classList.contains("cinema-overlay-btn"))) return false;
-          if (el.classList && el.classList.contains("tv-elevator-btn")) {
+          if (cl && (cl.contains("cinema-dock-btn") || cl.contains("cinema-dock-scrubber") || cl.contains("cinema-vol-step-btn") || cl.contains("cinema-top-hud-close") || cl.contains("cinema-pause-center-btn") || cl.contains("cinema-overlay-btn"))) return false;
+          if (cl && cl.contains("tv-elevator-btn")) {
             return !(document.body && document.body.classList.contains("in-hero-slider")) && !isModalActive;
           }
+          const r = getCachedSpatialRect(el);
+          const minDim = (cl && cl.contains("hero-dot")) ? 2 : 4;
+          if (r.width <= minDim || r.height <= minDim) return false;
           const style = window.getComputedStyle(el);
           if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
-          const r = el.getBoundingClientRect();
-          const minDim = (el.classList && el.classList.contains("hero-dot")) ? 2 : 4;
-          return r.width > minDim && r.height > minDim;
+          return true;
         });
       }
 
       function getSpatialLayoutBox(el) {
-        const r = el.getBoundingClientRect();
+        const r = getCachedSpatialRect(el);
         const isStickyOrFixed = Boolean(
           el && (
             el.id === "smartPageIndicatorBtn" ||
@@ -690,14 +779,18 @@
 
       let lastSpatialNavDir = "down";
 
+      let _lastStickyHeaderHeightPx = 0;
       function syncStickyHeaderCssVars() {
         try {
           const headerEl = document.querySelector("header");
           if (!headerEl) return 54;
           const hr = headerEl.getBoundingClientRect();
           const h = hr.height > 0 ? Math.round(hr.height) : 54;
-          document.documentElement.style.setProperty("--sticky-header-height", h + "px");
-          document.documentElement.style.setProperty("--sticky-header-offset", (h + 20) + "px");
+          if (h !== _lastStickyHeaderHeightPx) {
+            _lastStickyHeaderHeightPx = h;
+            document.documentElement.style.setProperty("--sticky-header-height", h + "px");
+            document.documentElement.style.setProperty("--sticky-header-offset", (h + 20) + "px");
+          }
           return h;
         } catch (e) {
           return 54;
@@ -712,23 +805,18 @@
 
         const headerEl = document.querySelector("header");
         if (headerEl) {
-          const hr = headerEl.getBoundingClientRect();
-          if (hr.height > 0) {
-            const h = Math.round(hr.height);
-            document.documentElement.style.setProperty("--sticky-header-height", h + "px");
-            document.documentElement.style.setProperty("--sticky-header-offset", (h + 20) + "px");
-            if (hr.bottom > topObstruction) {
-              topObstruction = hr.bottom;
-            }
+          const hr = getCachedSpatialRect(headerEl);
+          if (hr.height > 0 && hr.bottom > topObstruction) {
+            topObstruction = hr.bottom;
           }
         }
 
         const searchOuter = document.querySelector(".search-bar-outer");
         if (searchOuter && !(el && el.closest && el.closest(".search-bar-outer"))) {
-          const cs = window.getComputedStyle(searchOuter);
-          if (cs.position === "sticky" || cs.position === "fixed") {
-            const sr = searchOuter.getBoundingClientRect();
-            if (sr.height > 0 && sr.bottom > topObstruction) {
+          const sr = getCachedSpatialRect(searchOuter);
+          if (sr.height > 0 && sr.bottom > topObstruction) {
+            const cs = window.getComputedStyle(searchOuter);
+            if (cs.position === "sticky" || cs.position === "fixed") {
               topObstruction = sr.bottom;
             }
           }
@@ -736,24 +824,33 @@
 
         const filterBar = document.querySelector(".floating-filter-bar");
         if (filterBar && !(el && el.closest && el.closest(".floating-filter-bar"))) {
-          const cs = window.getComputedStyle(filterBar);
-          const fr = filterBar.getBoundingClientRect();
-          if (cs.position === "sticky" || cs.position === "fixed") {
-            if (fr.height > 0 && fr.bottom > topObstruction) {
-              topObstruction = fr.bottom;
-            }
-          } else if (navDir === "up" && el && el.closest && el.closest("#resultsGridContainer")) {
-            // Wenn man im Ergebnisse-Grid nach oben navigiert und sich in der obersten Kartenreihe direkt unterhalb der Filterleiste befindet:
-            // Filterleisten-Höhe als oberen Puffer einrechnen, damit sowohl die Filterleiste als auch die Karte komplett unter dem Sticky-Header sichtbar werden.
-            const elBox = getSpatialLayoutBox(el);
-            const fbBox = getSpatialLayoutBox(filterBar);
-            if (elBox.top >= fbBox.bottom - 8 && (elBox.top - fbBox.bottom) < 110) {
-              topObstruction += Math.max(0, fr.height + 14);
+          const fr = getCachedSpatialRect(filterBar);
+          if (fr.height > 0) {
+            const cs = window.getComputedStyle(filterBar);
+            if (cs.position === "sticky" || cs.position === "fixed") {
+              if (fr.bottom > topObstruction) {
+                topObstruction = fr.bottom;
+              }
+            } else if (navDir === "up" && el && el.closest && el.closest("#resultsGridContainer")) {
+              // Wenn man im Ergebnisse-Grid nach oben navigiert und sich in der obersten Kartenreihe direkt unterhalb der Filterleiste befindet:
+              // Filterleisten-Höhe als oberen Puffer einrechnen, damit sowohl die Filterleiste als auch die Karte komplett unter dem Sticky-Header sichtbar werden.
+              const elBox = getSpatialLayoutBox(el);
+              const fbBox = getSpatialLayoutBox(filterBar);
+              if (elBox.top >= fbBox.bottom - 8 && (elBox.top - fbBox.bottom) < 110) {
+                topObstruction += Math.max(0, fr.height + 14);
+              }
             }
           }
         }
 
         return Math.max(52, topObstruction);
+      }
+
+      let _lastVerifiedCatalogRowTop = null;
+      let _lastVerifiedCatalogScrollY = -1;
+
+      function getSpatialScrollBehaviorClient() {
+        return (document.body && document.body.getAttribute("data-device") === "tv") ? "auto" : "smooth";
       }
 
       function useSpatialScrollIntoView(el, navDir = lastSpatialNavDir) {
@@ -799,7 +896,7 @@
                 if (typeof scrollDetailModalToHeroStageTopClient === "function") {
                   scrollDetailModalToHeroStageTopClient();
                 } else {
-                  modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
+                  modalBackdrop.scrollTo({ top: 0, behavior: getSpatialScrollBehaviorClient() });
                 }
                 return;
               }
@@ -871,22 +968,43 @@
               return;
             }
 
-            // Hauptseite: Wenn Fokus auf Header, Suchleiste oder Hero-Slider liegt -> komplett nach oben (top: 0) scrollen
+            // Hauptseite: Wenn Fokus auf Header, Suchleiste, Hero-Slider oder oberster Filter-/Sortierleiste liegt -> komplett nach oben (top: 0) scrollen
             const inTopZone = Boolean(
               el.closest && (
                 el.closest("header") ||
                 el.closest(".search-bar-outer") ||
                 el.closest("#heroBannerSlot") ||
                 el.closest(".hero") ||
-                el.closest(".hero-collapsed-strip")
+                el.closest(".hero-collapsed-strip") ||
+                el.closest(".floating-filter-bar")
               )
             );
             const curScrollY = window.scrollY || window.pageYOffset || 0;
             if (inTopZone) {
+              _lastVerifiedCatalogRowTop = null;
+              _lastVerifiedCatalogScrollY = -1;
               if (curScrollY > 0) {
                 window.scrollTo({ top: 0, behavior: "auto" });
               }
               return;
+            }
+
+            // O(1) TV-Fast-Path: Bei Links/Rechts innerhalb derselben bereits sichtbar geprüften Kartenreihe im Hauptkatalog
+            // sind Header-/Filterbar-Messung und Vertikal-Scroll komplett überflüssig!
+            const isCatalogGridCard = Boolean(
+              el.classList &&
+              el.classList.contains("card") &&
+              el.parentElement &&
+              el.parentElement.id === "resultsGridContainer"
+            );
+            if (
+              isCatalogGridCard &&
+              (navDir === "left" || navDir === "right") &&
+              _lastVerifiedCatalogRowTop !== null &&
+              Math.abs(curScrollY - _lastVerifiedCatalogScrollY) < 4 &&
+              Math.abs(el.offsetTop - _lastVerifiedCatalogRowTop) < 12
+            ) {
+              return false;
             }
 
             // Dynamisches Offset aus Sticky-Header + Filter-Bar berechnen (unten Platz für Fokus-Info-Zeile lassen)
@@ -896,27 +1014,42 @@
             const safeBottomBoundary = window.innerHeight - (isCardTarget ? 78 : 28);
             const curtainEl = document.getElementById("heroCurtainShell");
             const pendingCurtainCollapseH = (curtainEl && curtainEl.classList.contains("is-collapsed"))
-              ? Math.max(0, curtainEl.getBoundingClientRect().height)
+              ? Math.max(0, getCachedSpatialRect(curtainEl).height)
               : 0;
-            const rawR = el.getBoundingClientRect();
+            const rawR = getCachedSpatialRect(el);
             const effTop = rawR.top - pendingCurtainCollapseH;
             const effBottom = rawR.bottom - pendingCurtainCollapseH;
 
             if (effTop < safeTopBoundary) {
               const targetScrollY = Math.max(0, curScrollY + (effTop - safeTopBoundary));
-              window.scrollTo({ top: targetScrollY, behavior: "auto" });
+              if (Math.abs(targetScrollY - curScrollY) > 1) {
+                window.scrollTo({ top: targetScrollY, behavior: "auto" });
+                _lastVerifiedCatalogRowTop = isCatalogGridCard ? el.offsetTop : null;
+                _lastVerifiedCatalogScrollY = targetScrollY;
+                return true;
+              }
             } else if (effBottom > safeBottomBoundary) {
               const targetScrollY = Math.max(0, curScrollY + (effBottom - safeBottomBoundary));
-              window.scrollTo({ top: targetScrollY, behavior: "auto" });
+              if (Math.abs(targetScrollY - curScrollY) > 1) {
+                window.scrollTo({ top: targetScrollY, behavior: "auto" });
+                _lastVerifiedCatalogRowTop = isCatalogGridCard ? el.offsetTop : null;
+                _lastVerifiedCatalogScrollY = targetScrollY;
+                return true;
+              }
+            }
+            if (isCatalogGridCard) {
+              _lastVerifiedCatalogRowTop = el.offsetTop;
+              _lastVerifiedCatalogScrollY = curScrollY;
             }
           } catch (e) {}
+          return false;
         };
 
         // 1. Sofortiger Scroll-Durchlauf
-        applyScrollPass();
+        const didScroll = applyScrollPass();
 
-        // 2. Zweiter Verifikations-Durchlauf im nächsten Animations-Frame, um eventuelle Layout-Shifts durch content-visibility: auto beim Hochscrollen auszugleichen
-        if (typeof window.requestAnimationFrame === "function") {
+        // 2. Zweiter Verifikations-Durchlauf im nächsten Animations-Frame NUR wenn tatsächlich gescrollt wurde (vermeidet doppeltes Forced-Layout bei Links/Rechts auf TV!)
+        if (didScroll && typeof window.requestAnimationFrame === "function") {
           window.requestAnimationFrame(() => {
             if (currentSpatialEl === el) {
               applyScrollPass();
@@ -927,18 +1060,36 @@
 
       const CARD_SINGLE_TRUTH_SELECTOR = ".card, .detail-sim-card, .detail-cast-card, .world-portal-card, .rm-entry-card";
 
+      const _activeSpatialFocusEls = new Set();
+      window._trackSpatialFocusEl = function(el) {
+        if (el && el.classList) _activeSpatialFocusEls.add(el);
+      };
+
       function clearAllSpatialFocusClasses(keepEl = null) {
-        try {
-          document.querySelectorAll(".spatial-focus").forEach((staleEl) => {
+        if (_activeSpatialFocusEls.size > 0) {
+          _activeSpatialFocusEls.forEach((staleEl) => {
             if (staleEl !== keepEl) {
-              staleEl.classList.remove("spatial-focus");
-              staleEl.classList.remove("ac-kb-active");
+              try {
+                staleEl.classList.remove("spatial-focus");
+                staleEl.classList.remove("ac-kb-active");
+              } catch (_e) {}
+              _activeSpatialFocusEls.delete(staleEl);
             }
           });
-        } catch (_e) {}
+        } else {
+          try {
+            document.querySelectorAll(".spatial-focus").forEach((staleEl) => {
+              if (staleEl !== keepEl) {
+                staleEl.classList.remove("spatial-focus");
+                staleEl.classList.remove("ac-kb-active");
+              }
+            });
+          } catch (_e) {}
+        }
         if (currentSpatialEl && currentSpatialEl !== keepEl) {
           currentSpatialEl.classList.remove("spatial-focus");
           currentSpatialEl.classList.remove("ac-kb-active");
+          _activeSpatialFocusEls.delete(currentSpatialEl);
         }
       }
 
@@ -959,6 +1110,7 @@
         }
         currentSpatialEl = el;
         currentSpatialEl.classList.add("spatial-focus");
+        _activeSpatialFocusEls.add(currentSpatialEl);
         if (typeof syncCinemaVolPopoverFocusStateClient === "function") {
           syncCinemaVolPopoverFocusStateClient(currentSpatialEl);
         }
@@ -1004,7 +1156,7 @@
         if (scrollIntoView) {
           useSpatialScrollIntoView(el, navDir);
         }
-        syncCatalogFocusInfoBarClient();
+        scheduleCatalogFocusInfoBarSyncClient();
       }
 
       function jumpSpatialFocus(el, scrollIntoView = true, navDir = lastSpatialNavDir) {
@@ -1284,8 +1436,18 @@
         const tag = (currentSpatialEl.tagName || "").toUpperCase();
         if (tag === "SELECT") {
           currentSpatialEl.focus();
+          let openedPicker = false;
           if (typeof currentSpatialEl.showPicker === "function") {
-            try { currentSpatialEl.showPicker(); } catch (e) {}
+            try {
+              currentSpatialEl.showPicker();
+              openedPicker = true;
+            } catch (e) {}
+          }
+          if (!openedPicker) {
+            try {
+              currentSpatialEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+              currentSpatialEl.click();
+            } catch (_e) {}
           }
           return;
         }
@@ -1300,6 +1462,94 @@
       function moveSpatialFocus(dir, suppressScroll = false, isRepeatEvent = false) {
         engageKeyboardNavMode();
         lastSpatialNavDir = dir || "down";
+        invalidateSpatialTickRectCache();
+
+        // O(1) Android-TV / Fire-TV Fast-Path innerhalb eines Katalog-Kartenrasters (.grid):
+        // Vermeidet komplette DOM-Abfrage + 500x getComputedStyle/getBoundingClientRect bei normaler D-Pad-Steuerung im Raster!
+        if (
+          currentSpatialEl &&
+          !userScrolledRecently &&
+          !state.sidebarOpen &&
+          currentSpatialEl.classList &&
+          currentSpatialEl.classList.contains("card") &&
+          document.body.contains(currentSpatialEl)
+        ) {
+          const elevHoverFast = document.getElementById("tvQuickJumpElevator");
+          const hasBlockingFastOverlay = Boolean(
+            (elevHoverFast && elevHoverFast.classList.contains("is-hover-expanded")) ||
+            isManualNoTmdbModalOpenClient() ||
+            document.getElementById("customDialogRoot")?.firstElementChild ||
+            document.getElementById("subModalOverlayRoot")?.firstElementChild ||
+            document.getElementById("lightboxRoot")?.firstElementChild ||
+            document.getElementById("personSpotlightOverlayRoot")?.firstElementChild ||
+            document.getElementById("modalRoot")?.firstElementChild ||
+            document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
+            document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open")
+          );
+          if (!hasBlockingFastOverlay) {
+            const parentGrid = currentSpatialEl.parentElement;
+            if (parentGrid && parentGrid.classList && (parentGrid.classList.contains("carousel") || parentGrid.classList.contains("grid"))) {
+              const gridChildren = parentGrid.children;
+              const cards = [];
+              let curIdx = -1;
+              for (let i = 0; i < gridChildren.length; i++) {
+                const ch = gridChildren[i];
+                if (ch.classList && ch.classList.contains("card")) {
+                  if (ch === currentSpatialEl) curIdx = cards.length;
+                  cards.push(ch);
+                }
+              }
+              if (curIdx !== -1) {
+                const curTop = currentSpatialEl.offsetTop;
+                if (dir === "right" && curIdx + 1 < cards.length) {
+                  const nextCard = cards[curIdx + 1];
+                  if (Math.abs(nextCard.offsetTop - curTop) < 28) {
+                    edgePushLastStepAt = Date.now();
+                    edgePushArrivedEl = null;
+                    setSpatialFocus(nextCard, !suppressScroll, "right");
+                    return;
+                  }
+                } else if (dir === "left" && curIdx > 0) {
+                  const prevCard = cards[curIdx - 1];
+                  if (Math.abs(prevCard.offsetTop - curTop) < 28) {
+                    edgePushLastStepAt = Date.now();
+                    edgePushArrivedEl = null;
+                    setSpatialFocus(prevCard, !suppressScroll, "left");
+                    return;
+                  }
+                } else if (dir === "down" || dir === "up") {
+                  let cols = 1;
+                  const firstTop = cards[0].offsetTop;
+                  for (let c = 1; c < cards.length && c < 20; c++) {
+                    if (Math.abs(cards[c].offsetTop - firstTop) < 28) cols++;
+                    else break;
+                  }
+                  if (cols >= 1) {
+                    const targetIdx = dir === "down" ? (curIdx + cols) : (curIdx - cols);
+                    if (targetIdx >= 0 && targetIdx < cards.length) {
+                      edgePushLastStepAt = Date.now();
+                      edgePushArrivedEl = null;
+                      setSpatialFocus(cards[targetIdx], !suppressScroll, dir);
+                      return;
+                    }
+                    // Letzte unvollständige Reihe beim Runterdrücken direkt auf das letzte Element dieser Reihe springen
+                    if (dir === "down" && targetIdx >= cards.length) {
+                      const curRowStart = Math.floor(curIdx / cols) * cols;
+                      const nextRowStart = curRowStart + cols;
+                      if (nextRowStart < cards.length) {
+                        edgePushLastStepAt = Date.now();
+                        edgePushArrivedEl = null;
+                        setSpatialFocus(cards[cards.length - 1], !suppressScroll, "down");
+                        return;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
         const list = getVisibleFocusables();
         if (!list.length) return;
 
@@ -1311,6 +1561,7 @@
             clearAllSpatialFocusClasses(parentCard);
             currentSpatialEl = parentCard;
             currentSpatialEl.classList.add("spatial-focus");
+            _activeSpatialFocusEls.add(currentSpatialEl);
           }
         }
 
@@ -1468,11 +1719,11 @@
           if (sc && (dir === "down" || dir === "up")) {
             const maxSc = Math.max(0, sc.scrollHeight - sc.clientHeight);
             if (dir === "down" && sc.scrollTop < maxSc - 4) {
-              sc.scrollBy({ top: 44, behavior: "smooth" });
+              sc.scrollBy({ top: 44, behavior: getSpatialScrollBehaviorClient() });
               return;
             }
             if (dir === "up" && sc.scrollTop > 4) {
-              sc.scrollBy({ top: -44, behavior: "smooth" });
+              sc.scrollBy({ top: -44, behavior: getSpatialScrollBehaviorClient() });
               return;
             }
           }
@@ -1509,7 +1760,7 @@
                 const r = targetEl.getBoundingClientRect();
                 const curY = window.scrollY || window.pageYOffset || 0;
                 const destY = Math.max(0, Math.round(curY + r.top - topBarH - 18));
-                window.scrollTo({ top: destY, behavior: "smooth" });
+                window.scrollTo({ top: destY, behavior: getSpatialScrollBehaviorClient() });
               }
             };
             focusFirstCatalogEntry();
@@ -1729,9 +1980,9 @@
           if (dir === "up") {
             const modalBackdropEl = document.querySelector("#modalRoot .modal-backdrop");
             if (modalBackdropEl && modalBackdropEl.scrollTop > 10) {
-              modalBackdropEl.scrollTo({ top: 0, behavior: "smooth" });
+              modalBackdropEl.scrollTo({ top: 0, behavior: getSpatialScrollBehaviorClient() });
             } else if ((window.scrollY || window.pageYOffset || 0) > 15) {
-              window.scrollTo({ top: 0, behavior: "smooth" });
+              window.scrollTo({ top: 0, behavior: getSpatialScrollBehaviorClient() });
             } else if (!modalBackdropEl && typeof expandHeroSliderAndFocusClient === "function") {
               const isHeroCollapsedNow = Boolean(
                 (typeof heroCurtainScrolledToCatalog !== "undefined" && heroCurtainScrolledToCatalog) ||
@@ -1774,14 +2025,14 @@
                 return;
               }
             }
-            // Express-Sprung aus der Kopfzeile direkt auf das erste Cover (Filterleiste bleibt gezielt per 1× Hoch ab der obersten Cover-Reihe erreichbar!)
+            // Von oben nach unten überspringt die Kopfzeile die Filterleiste und springt direkt auf das erste Cover (von unten nach oben per 1× Hoch ab der obersten Cover-Reihe landet der Fokus in der Filter-/Sortierleiste)
             const firstDirectCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
             if (firstDirectCard && list.includes(firstDirectCard)) {
               setSpatialFocus(firstDirectCard, !suppressScroll, "down");
               return;
             }
-            const firstFilterFallback = document.querySelector(".floating-filter-bar .f-pill, .floating-filter-bar .sort-select, .floating-filter-bar .mode-filter-select");
-            if (firstFilterFallback && list.includes(firstFilterFallback)) {
+            const firstFilterFallback = document.querySelector(".floating-filter-bar .mode-filter-select, .floating-filter-bar .new-filter-select, .floating-filter-bar .sort-select, .floating-filter-bar .ff-controls-grid > .btn, .floating-filter-bar .f-pill");
+            if (firstFilterFallback && (list.includes(firstFilterFallback) || (firstFilterFallback.offsetParent !== null && getCachedSpatialRect(firstFilterFallback).width > 4))) {
               setSpatialFocus(firstFilterFallback, !suppressScroll, "down");
               return;
             }
@@ -1887,35 +2138,89 @@
           }
         }
 
-        // Von der obersten Zeile der Filterleiste (.floating-filter-bar) führt Pfeil hoch (⬆) direkt in den Hero-Slider (fährt ihn ggf. wieder aus) / Suchleiste
+        // Deterministische 2D-Navigation innerhalb der Filter-/Sortierleiste (.floating-filter-bar):
+        // Links/Rechts läuft lückenlos Element für Element über Modus, Anbieter, Sortierung, Reset, Zufall, Welten & aktive Pills;
+        // Hoch wechselt erst ggf. eine Zeile höher innerhalb der Leiste und fährt erst ganz oben den Hero-Slider wieder aus;
+        // Runter wechselt erst ggf. in die nächste Zeile der Leiste (Pills / Welten-Tray) und danach auf das erste Cover.
         const curFF = currentSpatialEl.closest ? currentSpatialEl.closest(".floating-filter-bar") : null;
-        if (curFF && dir === "up") {
-          const curBoxFF = getSpatialLayoutBox(currentSpatialEl);
-          const hasHigherInFF = list.some(cand =>
-            cand !== currentSpatialEl &&
-            curFF.contains(cand) &&
-            getSpatialLayoutBox(cand).bottom <= curBoxFF.top + 6
-          );
-          if (!hasHigherInFF) {
-            if (typeof expandHeroSliderAndFocusClient === "function" && expandHeroSliderAndFocusClient("hero")) {
-              return;
+        if (curFF) {
+          const ffFocusables = Array.from(curFF.querySelectorAll(FOCUSABLE_SELECTOR)).filter(el => {
+            if (!el || el.disabled) return false;
+            if (list.includes(el)) return true;
+            const r = getCachedSpatialRect(el);
+            return r.width > 4 && r.height > 4 && el.offsetParent !== null;
+          });
+          if (ffFocusables.length > 0) {
+            const curBoxFF = getSpatialLayoutBox(currentSpatialEl);
+            const curCxFF = curBoxFF.left + curBoxFF.width / 2;
+            const curCyFF = curBoxFF.top + curBoxFF.height / 2;
+            if (dir === "left" || dir === "right") {
+              const sameRowFF = ffFocusables.filter(cand => {
+                const r = getSpatialLayoutBox(cand);
+                const vOv = Math.min(curBoxFF.bottom, r.bottom) - Math.max(curBoxFF.top, r.top);
+                return vOv > 4 || Math.abs((r.top + r.height / 2) - curCyFF) < Math.max(curBoxFF.height, r.height) * 0.65;
+              }).sort((a, b) => getSpatialLayoutBox(a).left - getSpatialLayoutBox(b).left);
+              const fIdx = sameRowFF.indexOf(currentSpatialEl);
+              if (fIdx !== -1) {
+                const nextFIdx = dir === "right" ? fIdx + 1 : fIdx - 1;
+                if (nextFIdx >= 0 && nextFIdx < sameRowFF.length) {
+                  edgePushLastStepAt = Date.now();
+                  edgePushArrivedEl = null;
+                  setSpatialFocus(sameRowFF[nextFIdx], !suppressScroll, dir);
+                  return;
+                }
+              }
+            } else if (dir === "up") {
+              const higherFF = ffFocusables.filter(cand => cand !== currentSpatialEl && getSpatialLayoutBox(cand).bottom <= curBoxFF.top + 6);
+              if (higherFF.length > 0) {
+                let bestUp = higherFF[0];
+                let bestDist = Infinity;
+                for (let i = 0; i < higherFF.length; i++) {
+                  const r = getSpatialLayoutBox(higherFF[i]);
+                  const d = Math.abs((r.left + r.width / 2) - curCxFF) + Math.abs(curBoxFF.top - r.bottom) * 2.2;
+                  if (d < bestDist) { bestDist = d; bestUp = higherFF[i]; }
+                }
+                setSpatialFocus(bestUp, !suppressScroll, "up");
+                return;
+              }
+              if (typeof expandHeroSliderAndFocusClient === "function" && expandHeroSliderAndFocusClient("hero")) {
+                return;
+              }
+              const actHeroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
+              const heroTr = document.getElementById("heroBtnTrailer");
+              const restoreBtn = document.getElementById("heroRestoreBtn");
+              if (actHeroDot && list.includes(actHeroDot)) {
+                setSpatialFocus(actHeroDot, !suppressScroll);
+                return;
+              }
+              if (heroTr && list.includes(heroTr)) {
+                setSpatialFocus(heroTr, !suppressScroll);
+                return;
+              }
+              if (restoreBtn && list.includes(restoreBtn)) {
+                setSpatialFocus(restoreBtn, !suppressScroll);
+                return;
+              }
+              if (focusSearchOrHeaderUp()) return;
+            } else if (dir === "down") {
+              const lowerFF = ffFocusables.filter(cand => cand !== currentSpatialEl && getSpatialLayoutBox(cand).top >= curBoxFF.bottom - 6);
+              if (lowerFF.length > 0) {
+                let bestDown = lowerFF[0];
+                let bestDist = Infinity;
+                for (let i = 0; i < lowerFF.length; i++) {
+                  const r = getSpatialLayoutBox(lowerFF[i]);
+                  const d = Math.abs((r.left + r.width / 2) - curCxFF) + Math.abs(r.top - curBoxFF.bottom) * 2.2;
+                  if (d < bestDist) { bestDist = d; bestDown = lowerFF[i]; }
+                }
+                setSpatialFocus(bestDown, !suppressScroll, "down");
+                return;
+              }
+              const firstCardBelowFilter = document.querySelector("#resultsGridContainer .card, #appRoot .card");
+              if (firstCardBelowFilter && list.includes(firstCardBelowFilter)) {
+                setSpatialFocus(firstCardBelowFilter, !suppressScroll, "down");
+                return;
+              }
             }
-            const actHeroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
-            const heroTr = document.getElementById("heroBtnTrailer");
-            const restoreBtn = document.getElementById("heroRestoreBtn");
-            if (actHeroDot && list.includes(actHeroDot)) {
-              setSpatialFocus(actHeroDot, !suppressScroll);
-              return;
-            }
-            if (heroTr && list.includes(heroTr)) {
-              setSpatialFocus(heroTr, !suppressScroll);
-              return;
-            }
-            if (restoreBtn && list.includes(restoreBtn)) {
-              setSpatialFocus(restoreBtn, !suppressScroll);
-              return;
-            }
-            if (focusSearchOrHeaderUp()) return;
           }
         }
 
@@ -1942,32 +2247,15 @@
 
         // Rechts-Rand-Ausbruch & Links-Rand-Ausbruch + Intelligente Zonen-Übergänge (Filterleiste ↔ Hero-Slider ↔ Cover-Grid)
         const hasOverlayBlockingElevator = Boolean(
-          document.getElementById("modalRoot")?.innerHTML.trim() ||
-          document.getElementById("lightboxRoot")?.innerHTML.trim() ||
-          document.getElementById("customDialogRoot")?.innerHTML.trim() ||
+          document.getElementById("modalRoot")?.firstElementChild ||
+          document.getElementById("lightboxRoot")?.firstElementChild ||
+          document.getElementById("customDialogRoot")?.firstElementChild ||
           state.sidebarOpen
         );
         const isCurrentCatalogCard = Boolean(currentSpatialEl.classList && currentSpatialEl.classList.contains("card"));
         const inFloatingFilterBar = Boolean(currentSpatialEl.closest && currentSpatialEl.closest(".floating-filter-bar"));
 
-        // 1) In der Filterleiste: Hoch fährt Hero-Slider wieder aus (oder geht zur Suche); Runter springt direkt auf das erste Cover
-        if (inFloatingFilterBar && !hasOverlayBlockingElevator) {
-          if (dir === "up") {
-            if (typeof expandHeroSliderAndFocusClient === "function" && expandHeroSliderAndFocusClient("hero")) {
-              return;
-            }
-            if (focusSearchOrHeaderUp()) return;
-          }
-          if (dir === "down") {
-            const firstCardBelowFilter = document.querySelector("#resultsGridContainer .card, #appRoot .card");
-            if (firstCardBelowFilter && list.includes(firstCardBelowFilter)) {
-              setSpatialFocus(firstCardBelowFilter, !suppressScroll, "down");
-              return;
-            }
-          }
-        }
-
-        // 2) Oberste Reihe im Cover-Grid + Hoch: gezielt in die Filterleiste (oder Hero-Slider wieder ausfahren)
+        // 2) Oberste Reihe im Cover-Grid + Hoch: gezielt auf das horizontal nächstgelegene Element in der Filter-/Sortierleiste (oder Hero-Slider wieder ausfahren)
         if (isCurrentCatalogCard && dir === "up" && !hasOverlayBlockingElevator && currentSpatialEl.closest && currentSpatialEl.closest("#resultsGridContainer")) {
           const hasCardAbove = list.some(cand => {
             if (cand === currentSpatialEl || !(cand.classList && cand.classList.contains("card"))) return false;
@@ -1976,10 +2264,25 @@
             return (r.top + r.height / 2) < cy - 24;
           });
           if (!hasCardAbove) {
-            const filterTarget = document.querySelector(".floating-filter-bar .mode-filter-select, .floating-filter-bar .sort-select, .floating-filter-bar .f-pill, .floating-filter-bar .new-filter-select");
-            if (filterTarget && list.includes(filterTarget)) {
-              setSpatialFocus(filterTarget, !suppressScroll, "up");
-              return;
+            const ffBar = document.querySelector(".floating-filter-bar");
+            if (ffBar) {
+              const ffControls = Array.from(ffBar.querySelectorAll(".mode-filter-select, .new-filter-select, .sort-select, .ff-controls-grid > .btn, .f-pill, .return-last-detail-chip, .world-portal-card")).filter(el => {
+                if (!el || el.disabled) return false;
+                if (list.includes(el)) return true;
+                const r = getCachedSpatialRect(el);
+                return r.width > 4 && r.height > 4 && el.offsetParent !== null;
+              });
+              if (ffControls.length > 0) {
+                let bestFF = ffControls[0];
+                let bestDist = Infinity;
+                for (let i = 0; i < ffControls.length; i++) {
+                  const r = getSpatialLayoutBox(ffControls[i]);
+                  const d = Math.abs((r.left + r.width / 2) - cx) + Math.max(0, cy - r.bottom) * 0.25;
+                  if (d < bestDist) { bestDist = d; bestFF = ffControls[i]; }
+                }
+                setSpatialFocus(bestFF, !suppressScroll, "up");
+                return;
+              }
             }
             if (typeof expandHeroSliderAndFocusClient === "function" && expandHeroSliderAndFocusClient("hero")) {
               return;
@@ -2054,7 +2357,10 @@
             if (cand === currentSpatialEl) return false;
             if (cand.id === "smartPageIndicatorBtn" || cand.id === "catalogBackToTopFab") return false;
             if (cand.closest && (cand.closest("#tvQuickJumpElevator") || cand.closest("header"))) return false;
-            if (isCurrentCatalogCard && !(cand.classList && cand.classList.contains("card"))) return false;
+            if (isCurrentCatalogCard) {
+              if (!(cand.classList && cand.classList.contains("card"))) return false;
+              if (cand.parentElement === currentSpatialEl.parentElement && Math.abs(cand.offsetTop - currentSpatialEl.offsetTop) > 60) return false;
+            }
             const r = getSpatialLayoutBox(cand);
             const cTx = r.left + r.width / 2;
             const cTy = r.top + r.height / 2;
@@ -2084,8 +2390,29 @@
         let bestEl = null;
         let bestScore = Infinity;
 
+        // Viewport-Band-Culling für #resultsGridContainer .card: verhindert hunderte offscreen getBoundingClientRect()-Aufrufe bei langen Katalogen
+        const scoringGridEl = document.getElementById("resultsGridContainer");
+        const scoringWinScrollY = window.scrollY || window.pageYOffset || 0;
+        const scoringWinH = window.innerHeight || 720;
+        const scoringHasGrid = Boolean(scoringGridEl && scoringGridEl.firstElementChild && scoringGridEl.offsetParent !== null);
+        const scoringGridTopDoc = scoringHasGrid ? (getCachedSpatialRect(scoringGridEl).top + scoringWinScrollY) : 0;
+        const scoringGridBaseOffTop = scoringHasGrid ? scoringGridEl.firstElementChild.offsetTop : 0;
+        const scoringBandMin = scoringWinScrollY - scoringWinH * 1.4;
+        const scoringBandMax = scoringWinScrollY + scoringWinH * 2.4;
+
         for (const cand of list) {
           if (cand === currentSpatialEl) continue;
+          if (
+            scoringHasGrid &&
+            cand.parentElement === scoringGridEl &&
+            cand.classList &&
+            cand.classList.contains("card")
+          ) {
+            const cDocTop = scoringGridTopDoc + (cand.offsetTop - scoringGridBaseOffTop);
+            if (cDocTop < scoringBandMin || cDocTop > scoringBandMax) {
+              continue;
+            }
+          }
           // Schwebende Rand-Widgets (#tvQuickJumpElevator, #smartPageIndicatorBtn, #catalogBackToTopFab) bei normaler Raster-Suche überspringen
           if (
             cand.id === "smartPageIndicatorBtn" ||
@@ -2352,7 +2679,7 @@
           if (verticalUpHoldOriginCardEl && document.body.contains(verticalUpHoldOriginCardEl)) {
             searchShortcutReturnCardEl = verticalUpHoldOriginCardEl;
           }
-          window.scrollTo({ top: 0, behavior: "smooth" });
+          window.scrollTo({ top: 0, behavior: getSpatialScrollBehaviorClient() });
           const targetTopEl = document.getElementById("searchInput") || document.getElementById("sidebarToggleBtn");
           if (targetTopEl) {
             setSpatialFocus(targetTopEl, false, "up");
@@ -2432,7 +2759,7 @@
             }
             return;
           }
-          window.scrollTo({ top: 0, behavior: "smooth" });
+          window.scrollTo({ top: 0, behavior: getSpatialScrollBehaviorClient() });
           const wlInp = isWishlist ? document.getElementById("wishlistSearchInp") : null;
           const topTarget = (wlInp && list.includes(wlInp))
             ? wlInp
@@ -2571,7 +2898,7 @@
           const elevContainer = document.getElementById("tvQuickJumpElevator");
           if (elevContainer) elevContainer.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
         }
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        window.scrollTo({ top: 0, behavior: getSpatialScrollBehaviorClient() });
         const firstTopCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
         if (firstTopCard) {
           setSpatialFocus(firstTopCard, false, "up");
@@ -2612,7 +2939,7 @@
         verticalTurboExpressDone = false;
         moveSpatialFocus(dir, false, false);
 
-        const isModalOpenNow = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
+        const isModalOpenNow = Boolean(document.getElementById("modalRoot")?.firstElementChild);
         const isPageJumpOpenNow = Boolean(
           document.getElementById("customDialogRoot")?.querySelector(".page-jump-modal-backdrop")
         );
@@ -2647,13 +2974,13 @@
           verticalTurboExpressDone = true;
           cancelTopBarUpHold();
           const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
-          if (modalBackdrop && document.getElementById("modalRoot")?.innerHTML.trim()) {
+          if (modalBackdrop && document.getElementById("modalRoot")?.firstElementChild) {
             const list = getVisibleFocusables();
             if (dir === "up") {
               if (typeof scrollDetailModalToHeroStageTopClient === "function") {
                 scrollDetailModalToHeroStageTopClient();
               } else {
-                modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
+                modalBackdrop.scrollTo({ top: 0, behavior: getSpatialScrollBehaviorClient() });
               }
               const topModalBtn = document.querySelector("#detailHeroStageEl .detail-btn-play-white, #detailHeroStageEl .detail-btn-glass") || list[0];
               if (topModalBtn) jumpSpatialFocus(topModalBtn, false, "up");
@@ -2726,7 +3053,7 @@
 
         // 2. Falls Detail-Modal offen ist: 5 Zeilen / Episoden auf einmal springen
         const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
-        if (modalBackdrop && document.getElementById("modalRoot")?.innerHTML.trim()) {
+        if (modalBackdrop && document.getElementById("modalRoot")?.firstElementChild) {
           moveSpatialFocusMultiRowClient(dir, 5);
           if (typeof showHudToast === "function") {
             showHudToast(stepDir < 0 ? "⏫ 5 Zeilen nach oben" : "⏬ 5 Zeilen nach unten");
@@ -2795,7 +3122,7 @@
         const isSearchInpFocused = activeEl && activeEl.id === "searchInput";
         const activeInputType = activeTag === "INPUT" ? String(activeEl.type || "text").toLowerCase() : "";
         const isRangeOrNonTextInput = activeTag === "INPUT" && (activeInputType === "range" || activeInputType === "button" || activeInputType === "checkbox" || activeInputType === "radio" || activeInputType === "submit" || activeInputType === "reset");
-        const isTypingInInput = (activeTag === "INPUT" && !isRangeOrNonTextInput) || activeTag === "TEXTAREA" || activeTag === "SELECT" || Boolean(activeEl && activeEl.isContentEditable);
+        const isTypingInInput = (activeTag === "INPUT" && !isRangeOrNonTextInput) || activeTag === "TEXTAREA" || Boolean(activeEl && activeEl.isContentEditable);
 
         const isBackKey = ev.key === "Escape" || ev.key === "GoBack" || ev.key === "BrowserBack" || ev.key === "XF86Back" || ev.keyCode === 4 || ev.keyCode === 166 || (ev.key === "Backspace" && !isTypingInInput);
         if (isBackKey) {
@@ -2824,7 +3151,7 @@
             ev.preventDefault();
             return;
           }
-          if (document.getElementById("customDialogRoot")?.innerHTML.trim()) {
+          if (document.getElementById("customDialogRoot")?.firstElementChild) {
             if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
             if (typeof closeCustomDialog === "function") closeCustomDialog(null);
             ev.preventDefault();
@@ -2836,7 +3163,7 @@
             ev.preventDefault();
             return;
           }
-          if (document.getElementById("subModalOverlayRoot")?.innerHTML.trim() && typeof closeSubModalOverlayClient === "function") {
+          if (document.getElementById("subModalOverlayRoot")?.firstElementChild && typeof closeSubModalOverlayClient === "function") {
             if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
             closeSubModalOverlayClient();
             ev.preventDefault();
@@ -2886,7 +3213,7 @@
             return;
           }
           const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
-          if (spotlightRoot && spotlightRoot.innerHTML.trim() && typeof closePersonSpotlightOverlayClient === "function") {
+          if (spotlightRoot && spotlightRoot.firstElementChild && typeof closePersonSpotlightOverlayClient === "function") {
             closePersonSpotlightOverlayClient(ev);
             ev.preventDefault();
             return;
@@ -3114,7 +3441,7 @@
             adjustPageJumpModalValueClient(ev.shiftKey ? 5 : 1);
             return;
           }
-          const modalOpen = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
+          const modalOpen = Boolean(document.getElementById("modalRoot")?.firstElementChild);
           if (modalOpen && ev.shiftKey && !isTypingInInput) {
             cancelModalArrowHold();
             const nextBtn = document.getElementById("modalAdjNextBtn");
@@ -3150,7 +3477,7 @@
             adjustPageJumpModalValueClient(ev.shiftKey ? -5 : -1);
             return;
           }
-          const modalOpen = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
+          const modalOpen = Boolean(document.getElementById("modalRoot")?.firstElementChild);
           if (modalOpen && ev.shiftKey && !isTypingInInput) {
             cancelModalArrowHold();
             const prevBtn = document.getElementById("modalAdjPrevBtn");
@@ -3257,8 +3584,8 @@
 
         // Type-to-Search: Sobald auf der Tastatur ein Buchstabe/Zahl getippt wird, startet automatisch die Suche!
         if (!isTypingInInput && !ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key.length === 1 && /[a-zA-Z0-9äöüÄÖÜß]/.test(ev.key)) {
-          const modalOpen = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
-          const dialogOpen = Boolean(document.getElementById("customDialogRoot")?.innerHTML.trim());
+          const modalOpen = Boolean(document.getElementById("modalRoot")?.firstElementChild);
+          const dialogOpen = Boolean(document.getElementById("customDialogRoot")?.firstElementChild);
           const rmOpen = Boolean(document.getElementById("tvQuickJumpElevator")?.classList.contains("has-subpanel"));
           if (!modalOpen && !dialogOpen && !rmOpen) {
             const sInp = document.getElementById("searchInput");
@@ -3354,10 +3681,50 @@
         hud.classList.add("visible");
       }
 
+      let gamepadPollRafId = 0;
+      let gamepadPollActive = false;
+
+      function hasConnectedGamepadClient() {
+        try {
+          if (!navigator.getGamepads) return false;
+          const pads = navigator.getGamepads();
+          if (!pads) return false;
+          for (let i = 0; i < pads.length; i++) {
+            if (pads[i] && pads[i].connected !== false) return true;
+          }
+        } catch (_e) {}
+        return false;
+      }
+
+      function stopGamepadPollLoopClient() {
+        gamepadPollActive = false;
+        if (gamepadPollRafId) {
+          cancelAnimationFrame(gamepadPollRafId);
+          gamepadPollRafId = 0;
+        }
+        const hud = document.getElementById("controllerHudBar");
+        if (hud) hud.classList.remove("visible");
+      }
+
+      function startGamepadPollLoopClient() {
+        if (gamepadPollActive || document.hidden) return;
+        gamepadPollActive = true;
+        gamepadPollRafId = requestAnimationFrame(pollGamepadNavigation);
+      }
+
       function pollGamepadNavigation() {
+        gamepadPollRafId = 0;
+        if (!gamepadPollActive || document.hidden) {
+          gamepadPollActive = false;
+          return;
+        }
         try {
           const pads = navigator.getGamepads ? navigator.getGamepads() : [];
           const gp = pads && (pads[0] || pads[1] || pads[2] || pads[3]);
+          if (!gp || gp.connected === false) {
+            stopGamepadPollLoopClient();
+            return;
+          }
           if (gp) {
             const now = Date.now();
             const axX = gp.axes?.[0] || 0;
@@ -3448,7 +3815,9 @@
                 const hud = document.getElementById("controllerHudBar");
                 if (hud) hud.classList.remove("visible");
               }
-              requestAnimationFrame(pollGamepadNavigation);
+              if (gamepadPollActive && !document.hidden) {
+                gamepadPollRafId = requestAnimationFrame(pollGamepadNavigation);
+              }
               return;
             }
 
@@ -3592,7 +3961,7 @@
               }
               else if (btnX) {
                 const modalWlBtn = document.getElementById("modalWishlistBtn");
-                if (modalWlBtn && document.getElementById("modalRoot")?.innerHTML.trim()) {
+                if (modalWlBtn && document.getElementById("modalRoot")?.firstElementChild) {
                   modalWlBtn.click();
                 } else {
                   const focusedCard = currentSpatialEl && currentSpatialEl.closest ? currentSpatialEl.closest(".card[data-card-key]") : null;
@@ -3621,7 +3990,7 @@
                 lastGamepadStepAt = now + 220;
               }
               else if (btnLB) {
-                if (document.getElementById("modalRoot")?.innerHTML.trim()) {
+                if (document.getElementById("modalRoot")?.firstElementChild) {
                   navigateDetailModalAdjacent(-1);
                 } else {
                   setHeroSlideIndex(state.heroIndex - 1);
@@ -3629,7 +3998,7 @@
                 lastGamepadStepAt = now + 160;
               }
               else if (btnRB) {
-                if (document.getElementById("modalRoot")?.innerHTML.trim()) {
+                if (document.getElementById("modalRoot")?.firstElementChild) {
                   navigateDetailModalAdjacent(1);
                 } else {
                   setHeroSlideIndex(state.heroIndex + 1);
@@ -3644,9 +4013,30 @@
             }
           }
         } catch (e) {}
-        requestAnimationFrame(pollGamepadNavigation);
+        if (gamepadPollActive && !document.hidden) {
+          gamepadPollRafId = requestAnimationFrame(pollGamepadNavigation);
+        }
       }
-      requestAnimationFrame(pollGamepadNavigation);
+      window.addEventListener("gamepadconnected", () => {
+        startGamepadPollLoopClient();
+      });
+      window.addEventListener("gamepaddisconnected", () => {
+        if (!hasConnectedGamepadClient()) stopGamepadPollLoopClient();
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          if (gamepadPollRafId) {
+            cancelAnimationFrame(gamepadPollRafId);
+            gamepadPollRafId = 0;
+          }
+          gamepadPollActive = false;
+        } else if (hasConnectedGamepadClient()) {
+          startGamepadPollLoopClient();
+        }
+      });
+      if (hasConnectedGamepadClient()) {
+        startGamepadPollLoopClient();
+      }
 
       // =========================================================================
       // TELEPORT APK BRIDGE, 1-KLICK TV-LOGIN & KONTO-GEKOPPELTER HANDY -> TV LIVE-SYNC
@@ -3989,6 +4379,7 @@
         }
 
         const tvSessionBootAt = Date.now();
+        let tvLastRemoteEventAt = 0;
         let pendingRemoteScrollAnchor = null;
         let pendingRemoteScrollTimer = null;
 
@@ -3996,6 +4387,7 @@
           if (!sig || !sig.offer || !sig.offer.sdp || typeof RTCPeerConnection === "undefined") return;
           if (Number(sig.createdAt || 0) <= tvLastSeenSignalCreatedAt) return;
           tvLastSeenSignalCreatedAt = Number(sig.createdAt || Date.now());
+          tvLastRemoteEventAt = Date.now();
           markTvReceiverActivity();
           teardownTvReceiverPeer();
           const myDeviceId = getOrCreateSyncDeviceId();
@@ -4014,6 +4406,7 @@
               tvDataChannel = ch;
               ch.onopen = () => {
                 tvP2pConnected = true;
+                tvLastRemoteEventAt = Date.now();
                 markTvReceiverActivity();
                 showHudToast("📱 Handy direkt verbunden (Live-Sync)");
               };
@@ -4027,7 +4420,10 @@
               ch.onmessage = (msgEv) => {
                 try {
                   const parsed = JSON.parse(String(msgEv.data || "{}"));
-                  if (parsed && parsed.type) applyIncomingTvSyncEvent(parsed);
+                  if (parsed && parsed.type) {
+                    tvLastRemoteEventAt = Date.now();
+                    applyIncomingTvSyncEvent(parsed);
+                  }
                 } catch (_e) {}
               };
             };
@@ -4092,6 +4488,7 @@
                 if (r && r.ok) {
                   if (r.signal && r.signal.offer && !r.signal.answer) {
                     gotEvent = true;
+                    tvLastRemoteEventAt = Date.now();
                     await handleIncomingTvOffer(r.signal);
                   }
                   if (r.hasUpdate && r.event) {
@@ -4099,13 +4496,17 @@
                     tvLastAppliedStateSeq = Number(r.seq || tvLastAppliedStateSeq);
                     if (!isStalePreBoot) {
                       gotEvent = true;
+                      tvLastRemoteEventAt = Date.now();
                       applyIncomingTvSyncEvent(r.event);
                     }
                   }
                 }
               } catch (_e) {}
             }
-            const nextDelay = (document.hidden || tvP2pConnected) ? 12000 : (gotEvent ? 1800 : (idleMs > 120000 ? 7500 : 3200));
+            const hasRecentRemote = tvLastRemoteEventAt > 0 && (Date.now() - tvLastRemoteEventAt) < 180000;
+            const nextDelay = (document.hidden || tvP2pConnected)
+              ? 12000
+              : (gotEvent ? 1800 : (hasRecentRemote ? 3200 : (idleMs > 120000 ? 15000 : 7000)));
             tvStatePollTimer = setTimeout(runCombinedTick, nextDelay);
           };
 
@@ -4220,7 +4621,7 @@
                 openDetails(mType, tmdbId, Boolean(ev.autoOpenTrailer));
               }
             } else if (ev.type === "detail:close") {
-              if (document.getElementById("modalRoot")?.innerHTML.trim() && typeof closeDetailModal === "function") {
+              if (document.getElementById("modalRoot")?.firstElementChild && typeof closeDetailModal === "function") {
                 closeDetailModal();
               }
             } else if (ev.type === "trailer:control") {
@@ -4259,6 +4660,10 @@
         async function refreshTvSyncDevicesLazyClient(force = false) {
           if (!state || !state.isAuthenticated) {
             cachedOnlineTvs = [];
+            updateDetailCastToTvButtonVisibility();
+            return [];
+          }
+          if (!force && isCurrentDeviceTvModeClient()) {
             updateDetailCastToTvButtonVisibility();
             return [];
           }
@@ -4417,11 +4822,17 @@
             let appliedAnswer = false;
             let appliedIceCount = 0;
             let phoneSignalPollInFlight = false;
+            const signalPollStartedAt = Date.now();
             phoneSignalPollTimer = setInterval(async () => {
               if (!phoneControllingTvId || phoneTransportMode === "p2p" || phonePeerConn !== pc) {
                 if (phoneSignalPollTimer) { clearInterval(phoneSignalPollTimer); phoneSignalPollTimer = null; }
                 return;
               }
+              if ((Date.now() - signalPollStartedAt) > 25000) {
+                if (phoneSignalPollTimer) { clearInterval(phoneSignalPollTimer); phoneSignalPollTimer = null; }
+                return;
+              }
+              if (typeof document !== "undefined" && document.hidden) return;
               if (phoneSignalPollInFlight) return;
               phoneSignalPollInFlight = true;
               try {
@@ -4517,7 +4928,11 @@
           let bestDist = Infinity;
           for (let i = 0; i < cards.length; i++) {
             const rect = cards[i].getBoundingClientRect();
-            if (rect.bottom < 0 || rect.top > vh) continue;
+            if (rect.bottom < 0) continue;
+            if (rect.top > vh) {
+              if (best !== null) break;
+              continue;
+            }
             const cx = rect.left + rect.width / 2;
             const cy = rect.top + rect.height / 2;
             const dist = Math.abs(cy - targetY) * 1.4 + Math.abs(cx - targetX) * 0.4;
@@ -4530,35 +4945,37 @@
         }
 
         let lastP2pScrollEmitAt = 0;
-        window.addEventListener("scroll", () => {
-          if (!phoneControllingTvId || isRemoteTvSyncApplying) return;
-          if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
-          const now = Date.now();
-          const isP2p = phoneDataChannel && phoneDataChannel.readyState === "open";
-          if (isP2p && now - lastP2pScrollEmitAt < 130) return;
-          const emitAnchor = () => {
+        if (!(document.body && document.body.getAttribute("data-device") === "tv")) {
+          window.addEventListener("scroll", () => {
             if (!phoneControllingTvId || isRemoteTvSyncApplying) return;
-            const card = findCenterCatalogCardForSync();
-            const maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
-            const ratio = Math.min(1, Math.max(0, window.scrollY / maxScroll));
-            if (card) {
-              const tmdbId = card.getAttribute("data-card-id") || "";
-              const mediaType = card.getAttribute("data-card-type") || state.type || "m";
-              const pageNum = Math.max(1, Number(card.getAttribute("data-page-num") || state.page || 1));
-              const key = mediaType + ":" + tmdbId;
-              if (key === phoneLastSentAnchorKey) return;
-              phoneLastSentAnchorKey = key;
-              lastP2pScrollEmitAt = Date.now();
-              sendTvSyncPayloadFromPhone({ type: "scroll:anchor", tmdbId, mediaType, pageNum, ratio }, isP2p);
+            if (document.getElementById("modalRoot")?.firstElementChild) return;
+            const now = Date.now();
+            const isP2p = phoneDataChannel && phoneDataChannel.readyState === "open";
+            if (isP2p && now - lastP2pScrollEmitAt < 130) return;
+            const emitAnchor = () => {
+              if (!phoneControllingTvId || isRemoteTvSyncApplying) return;
+              const card = findCenterCatalogCardForSync();
+              const maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+              const ratio = Math.min(1, Math.max(0, window.scrollY / maxScroll));
+              if (card) {
+                const tmdbId = card.getAttribute("data-card-id") || "";
+                const mediaType = card.getAttribute("data-card-type") || state.type || "m";
+                const pageNum = Math.max(1, Number(card.getAttribute("data-page-num") || state.page || 1));
+                const key = mediaType + ":" + tmdbId;
+                if (key === phoneLastSentAnchorKey) return;
+                phoneLastSentAnchorKey = key;
+                lastP2pScrollEmitAt = Date.now();
+                sendTvSyncPayloadFromPhone({ type: "scroll:anchor", tmdbId, mediaType, pageNum, ratio }, isP2p);
+              }
+            };
+            if (isP2p) {
+              emitAnchor();
+            } else {
+              if (phoneScrollThrottleTimer) clearTimeout(phoneScrollThrottleTimer);
+              phoneScrollThrottleTimer = setTimeout(emitAnchor, 580);
             }
-          };
-          if (isP2p) {
-            emitAnchor();
-          } else {
-            if (phoneScrollThrottleTimer) clearTimeout(phoneScrollThrottleTimer);
-            phoneScrollThrottleTimer = setTimeout(emitAnchor, 580);
-          }
-        }, { passive: true });
+          }, { passive: true });
+        }
 
         function computeCompactFilterSig() {
           const s = (state && state.settings) || {};
@@ -4768,7 +5185,7 @@
         function handleTelePortNativeBack() {
           try {
             const dialogRoot = document.getElementById("customDialogRoot");
-            if (dialogRoot && dialogRoot.innerHTML.trim()) {
+            if (dialogRoot && dialogRoot.firstElementChild) {
               if (dialogRoot.querySelector(".page-jump-modal-backdrop") && typeof closePageJumpModalClient === "function") {
                 closePageJumpModalClient();
               } else if (typeof closeCustomDialog === "function") {
@@ -4784,19 +5201,19 @@
               return true;
             }
             const subModalRoot = document.getElementById("subModalOverlayRoot");
-            if (subModalRoot && subModalRoot.innerHTML.trim()) {
+            if (subModalRoot && subModalRoot.firstElementChild) {
               if (typeof closeSubModalOverlayClient === "function") closeSubModalOverlayClient();
               else subModalRoot.innerHTML = "";
               return true;
             }
             const spotlight = document.getElementById("personSpotlightOverlayRoot");
-            if (spotlight && spotlight.innerHTML.trim()) {
+            if (spotlight && spotlight.firstElementChild) {
               if (typeof closePersonSpotlightOverlayClient === "function") closePersonSpotlightOverlayClient();
               else spotlight.innerHTML = "";
               return true;
             }
             const lbRoot = document.getElementById("lightboxRoot");
-            if (lbRoot && lbRoot.innerHTML.trim()) {
+            if (lbRoot && lbRoot.firstElementChild) {
               if (typeof closeLightbox === "function") closeLightbox();
               else lbRoot.innerHTML = "";
               return true;
@@ -4828,7 +5245,7 @@
               return true;
             }
             const mRoot = document.getElementById("modalRoot");
-            if (mRoot && mRoot.innerHTML.trim()) {
+            if (mRoot && mRoot.firstElementChild) {
               if (typeof stopBotCodePollClient === "function") stopBotCodePollClient();
               stopTvPairPollClient();
               if (typeof closeDetailModal === "function") closeDetailModal();
@@ -4904,7 +5321,11 @@
       } catch (_e) {}
       initAuthSession();
       setTimeout(() => {
-        if (typeof pollAntiSpamQueueClient === "function") pollAntiSpamQueueClient(true);
+        let hasPendingAntiSpam = false;
+        try { hasPendingAntiSpam = sessionStorage.getItem("tma_antispam_pending") === "1"; } catch (_e) {}
+        if ((state.authUser?.isAdmin || hasPendingAntiSpam) && typeof pollAntiSpamQueueClient === "function") {
+          pollAntiSpamQueueClient(true);
+        }
         const hasLocalBackupCp = typeof loadBackupCheckpointClient === "function"
           ? Boolean(loadBackupCheckpointClient())
           : (() => {

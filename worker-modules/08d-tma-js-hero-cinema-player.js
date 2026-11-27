@@ -1494,9 +1494,11 @@
           }
         }
         try {
-          const d = await apiFetchJson(API_BASE + "/details?type=" + tc + "&id=" + encodeURIComponent(hero.id));
+          const d = typeof fetchMediaDetailsDedupClient === "function"
+            ? await fetchMediaDetailsDedupClient(tc, hero.id)
+            : await apiFetchJson(API_BASE + "/details?type=" + tc + "&id=" + encodeURIComponent(hero.id) + "&skipSaved=1");
           if (d && d.ok !== false) {
-            if (typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
+            if (typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map && !clientDetailsCache.has(cacheKey)) {
               clientDetailsCache.set(cacheKey, { data: d, ts: Date.now() });
             }
             if ((!hero.overview || !String(hero.overview).trim()) && d.overview && String(d.overview).trim()) {
@@ -1526,7 +1528,7 @@
             const curHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
             const curSlideKey = curHero ? ((curHero.media_type === "tv" || state.type === "s" ? "s" : "m") + "_" + curHero.id) : "";
             if (!curHero || curSlideKey !== slideKey) return;
-            if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
+            if (document.getElementById("modalRoot")?.firstElementChild) return;
             if (heroCurtainScrolledToCatalog || !isHeroStageAvailableForCurrentViewClient()) return;
             mountFn();
           };
@@ -1616,7 +1618,7 @@
         }
         if (!immediateForeground) {
           if (typeof document !== "undefined" && document.hidden) return;
-          if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
+          if (document.getElementById("modalRoot")?.firstElementChild) return;
           if (heroCurtainScrolledToCatalog || (document.body && document.body.classList.contains("hero-scrolled-past"))) return;
         }
         if (heroBgTeaserTimer) {
@@ -1637,7 +1639,7 @@
           if (!curHero || curSlideKey !== slideKey) return;
           if (!immediateForeground) {
             if (typeof document !== "undefined" && document.hidden) return;
-            if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
+            if (document.getElementById("modalRoot")?.firstElementChild) return;
             if (heroCurtainScrolledToCatalog || !isHeroStageAvailableForCurrentViewClient()) return;
           }
           const cands = await resolveHeroSlideTrailerCandidatesClient(curHero, heroType);
@@ -2214,28 +2216,40 @@
         window._heroVisibilityGuardBound = true;
         document.addEventListener("visibilitychange", () => {
           if (document.hidden) {
+            try { stopHeroRotationTimer(); } catch (_e) {}
             try { stopHeroBackgroundVideoTeaserClient(); } catch (_e) {}
             try {
               if (typeof stopDetailBackgroundVideoTeaserClient === "function") {
                 stopDetailBackgroundVideoTeaserClient();
               }
             } catch (_e) {}
+          } else {
+            try { startHeroRotationTimer(); } catch (_e) {}
           }
         });
       }
 
+      function stopHeroRotationTimer() {
+        if (heroRotationTimer) {
+          clearInterval(heroRotationTimer);
+          heroRotationTimer = null;
+        }
+      }
+
       function startHeroRotationTimer() {
-        if (heroRotationTimer) clearInterval(heroRotationTimer);
+        stopHeroRotationTimer();
+        if (typeof document !== "undefined" && document.hidden) return;
+        if (state.heroHidden || (typeof heroCurtainScrolledToCatalog !== "undefined" && heroCurtainScrolledToCatalog)) return;
         if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
-        const intervalMs = state.heroHidden ? 5500 : 7000;
+        const intervalMs = 7000;
         heroRotationTimer = setInterval(() => {
           if (typeof document !== "undefined" && document.hidden) return;
           if (typeof window !== "undefined" && window._tmaAppDeactivated) return;
           if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
           if (
-            document.getElementById("modalRoot")?.innerHTML.trim() ||
-            document.getElementById("lightboxRoot")?.innerHTML.trim() ||
-            document.getElementById("customDialogRoot")?.innerHTML.trim()
+            document.getElementById("modalRoot")?.firstElementChild ||
+            document.getElementById("lightboxRoot")?.firstElementChild ||
+            document.getElementById("customDialogRoot")?.firstElementChild
           ) {
             return;
           }
@@ -2441,7 +2455,7 @@
         heroMouseDraggingUp = false;
       }
 
-      if (typeof window !== "undefined" && !window._heroMouseSwipeListenersBound) {
+      if (typeof window !== "undefined" && !window._heroMouseSwipeListenersBound && !(document.body && document.body.getAttribute("data-device") === "tv")) {
         window._heroMouseSwipeListenersBound = true;
         window.addEventListener("selectstart", (ev) => {
           if (heroMouseDragActive || (document.body && document.body.classList.contains("is-gesture-dragging"))) {
@@ -2700,12 +2714,16 @@
         const rawBp = String(item.backdrop_path || item.poster_path || "").trim();
         if (!rawBp) return "";
         if (rawBp.startsWith("http://") || rawBp.startsWith("https://")) return rawBp;
-        return "https://image.tmdb.org/t/p/w1280" + (rawBp.startsWith("/") ? rawBp : ("/" + rawBp));
+        const isTvMode = Boolean(typeof document !== "undefined" && document.body && document.body.getAttribute("data-device") === "tv");
+        const bpSize = isTvMode ? "w780" : "w1280";
+        return "https://image.tmdb.org/t/p/" + bpSize + (rawBp.startsWith("/") ? rawBp : ("/" + rawBp));
       }
 
       function resolveHeroSlidePosterUrlClient(item, size) {
         if (!item) return "";
-        const sz = size || "w342";
+        const isTvMode = Boolean(typeof document !== "undefined" && document.body && document.body.getAttribute("data-device") === "tv");
+        let sz = size || "w342";
+        if (isTvMode && sz === "w780") sz = "w500";
         const ext = String(item.external_poster_url || item.poster || "").trim();
         const rawP = String(item.poster_path || item.backdrop_path || "").trim();
         if (typeof resolvePosterUrlClient === "function") {
@@ -2742,11 +2760,16 @@
         return nr + ", " + ng + ", " + nb;
       }
 
+      let _lastAppliedBodyAmbiSig = "";
       function applyDynamicHeroAmbilightClient(backdropUrl) {
         if (!backdropUrl) return;
+        if (document.body && document.body.getAttribute("data-device") === "tv") return;
+        const sampleUrl = String(backdropUrl).replace(/\\/t\\/p\\/(?:w1280|w780|original)\\//i, "/t/p/w300/");
         const applyPalette = (pal) => {
           if (!pal) return;
-          if (document.body) {
+          const nextSig = pal.c1 + "|" + pal.c2 + "|" + pal.c3;
+          if (document.body && _lastAppliedBodyAmbiSig !== nextSig) {
+            _lastAppliedBodyAmbiSig = nextSig;
             document.body.style.setProperty("--ambi-1", pal.c1);
             document.body.style.setProperty("--ambi-2", pal.c2);
             document.body.style.setProperty("--ambi-3", pal.c3);
@@ -2766,14 +2789,15 @@
             detailStage.classList.toggle("hero-bright-backdrop", Boolean(pal.isBrightLeft));
           }
         };
-        if (heroAmbilightColorCache.has(backdropUrl)) {
-          applyPalette(heroAmbilightColorCache.get(backdropUrl));
+        if (heroAmbilightColorCache.has(sampleUrl)) {
+          applyPalette(heroAmbilightColorCache.get(sampleUrl));
           return;
         }
         try {
           const img = new Image();
           img.crossOrigin = "anonymous";
           img.referrerPolicy = "no-referrer";
+          img.decoding = "async";
           img.onload = function () {
             try {
               const canvas = document.createElement("canvas");
@@ -2823,11 +2847,15 @@
                 c3: centerMain,
                 isBrightLeft: avgLeftLum > 136
               };
-              heroAmbilightColorCache.set(backdropUrl, palette);
+              if (typeof setLruMapEntryClient === "function") {
+                setLruMapEntryClient(heroAmbilightColorCache, sampleUrl, palette, 30);
+              } else {
+                heroAmbilightColorCache.set(sampleUrl, palette);
+              }
               applyPalette(palette);
             } catch (_e) {}
           };
-          img.src = backdropUrl;
+          img.src = sampleUrl;
         } catch (_err) {}
       }
 
@@ -3043,7 +3071,7 @@
             '<div class="cinema-clear-logo-fallback-title inline-marquee-wrap" data-marquee-always="1"' + (isReady ? ' style="display:none !important"' : '') + '>' +
               '<span class="inline-marquee-text hero-title-text">' + safeTitle + '</span>' +
             '</div>' +
-            '<img class="cinema-clear-logo" src="' + esc(logoUrl) + '" alt="' + safeTitle + '" draggable="false" onload="onClearLogoImgLoadSuccessClient(this)" onerror="onClearLogoImgErrorClient(this)" />' +
+            '<img class="cinema-clear-logo" src="' + esc(logoUrl) + '" alt="' + safeTitle + '" decoding="async" draggable="false" onload="onClearLogoImgLoadSuccessClient(this)" onerror="onClearLogoImgErrorClient(this)" />' +
           '</div>';
         }
         return '<div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1"' + clickProp + '>' +
@@ -3219,26 +3247,29 @@
         const heroTitleRaw = String(hero.title || hero.name || "");
         const heroTitleSafe = esc(heroTitleRaw);
         const heroPosterSafe = esc(hero.poster_path || hero.external_poster_url || hero.poster || "");
+        const isTvDeviceHeroInit = Boolean(document.body && document.body.dataset && document.body.dataset.device === "tv");
         const backdropUrl = resolveHeroSlideBackdropUrlClient(hero);
-        const posterUrl = resolveHeroSlidePosterUrlClient(hero, "w780") || backdropUrl;
+        const posterUrl = isTvDeviceHeroInit ? "" : (resolveHeroSlidePosterUrlClient(hero, "w780") || backdropUrl);
         const heroCardKey = heroType + "_" + hero.id;
         const isHeroSaved = typeof savedKeysSet !== "undefined" && savedKeysSet.has(heroCardKey);
-        const cachedAmbi = backdropUrl && heroAmbilightColorCache.has(backdropUrl)
+        const cachedAmbi = (!isTvDeviceHeroInit && backdropUrl && heroAmbilightColorCache.has(backdropUrl))
           ? heroAmbilightColorCache.get(backdropUrl)
           : null;
-        if (backdropUrl && !cachedAmbi) {
-          setTimeout(() => applyDynamicHeroAmbilightClient(backdropUrl), 25);
-        } else if (cachedAmbi && document.body) {
-          document.body.style.setProperty("--ambi-1", cachedAmbi.c1);
-          document.body.style.setProperty("--ambi-2", cachedAmbi.c2);
-          document.body.style.setProperty("--ambi-3", cachedAmbi.c3);
+        if (!isTvDeviceHeroInit) {
+          if (backdropUrl && !cachedAmbi) {
+            setTimeout(() => applyDynamicHeroAmbilightClient(backdropUrl), 25);
+          } else if (cachedAmbi && document.body) {
+            document.body.style.setProperty("--ambi-1", cachedAmbi.c1);
+            document.body.style.setProperty("--ambi-2", cachedAmbi.c2);
+            document.body.style.setProperty("--ambi-3", cachedAmbi.c3);
+          }
         }
-        const ambiStyleVars = cachedAmbi
+        const ambiStyleVars = (!isTvDeviceHeroInit && cachedAmbi)
           ? ('--ambi-1:' + cachedAmbi.c1 + ';--ambi-2:' + cachedAmbi.c2 + ';--ambi-3:' + cachedAmbi.c3 + ';')
           : '';
         const hasRealBackdrop = Boolean(String(hero.backdrop_path || "").trim());
         const posterFallbackClass = hasRealBackdrop ? "" : " is-poster-fallback";
-        const brightClass = cachedAmbi && cachedAmbi.isBrightLeft ? ' hero-bright-backdrop' : '';
+        const brightClass = (!isTvDeviceHeroInit && cachedAmbi && cachedAmbi.isBrightLeft) ? ' hero-bright-backdrop' : '';
         const collapsedClass = (state.heroHidden || heroCurtainScrolledToCatalog) ? ' is-collapsed' : '';
         const layerAStyle = (backdropUrl ? ('--hero-bg-landscape:url(' + esc(backdropUrl) + ');') : '--hero-bg-landscape:none;') +
           (posterUrl ? ('--hero-bg-portrait:url(' + esc(posterUrl) + ');') : '--hero-bg-portrait:none;');
@@ -3262,11 +3293,15 @@
         requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient());
         setTimeout(() => scheduleHeroBackgroundVideoTeaserClient(false), 60);
 
+        const ambilightLayersHtml = isTvDeviceHeroInit
+          ? ''
+          : ('<div id="heroAmbilightEl" class="hero-ambilight-glow" style="' + layerAStyle + '"></div>' +
+             '<div id="heroAmbilightBeamsEl" class="hero-ambilight-beams"></div>');
+
         return '<div id="heroCurtainShell" class="hero-curtain-shell' + collapsedClass + '">' +
           '<div class="hero-curtain-inner">' +
             '<div id="heroStageWrapEl" class="hero-stage-wrap' + brightClass + '" style="' + ambiStyleVars + '">' +
-              '<div id="heroAmbilightEl" class="hero-ambilight-glow" style="' + layerAStyle + '"></div>' +
-              '<div id="heroAmbilightBeamsEl" class="hero-ambilight-beams"></div>' +
+              ambilightLayersHtml +
               '<div id="heroStageEl" class="hero" onmouseenter="setHeroPointerHover(true)" onmouseleave="setHeroPointerHover(false)" onmousedown="onHeroMouseDown(event)" ontouchstart="onHeroTouchStart(event)" ontouchmove="onHeroTouchMove(event)" ontouchend="onHeroTouchEnd(event)">' +
                 '<div id="heroBackdropLayerA" class="hero-backdrop-layer active-layer' + posterFallbackClass + '" style="' + layerAStyle + '"></div>' +
                 '<div id="heroBackdropLayerB" class="hero-backdrop-layer" style="--hero-bg-landscape:none;--hero-bg-portrait:none"></div>' +
@@ -3358,13 +3393,16 @@
             const isHeroSaved = typeof savedKeysSet !== "undefined" && savedKeysSet.has(heroCardKey);
 
             // 1. Dynamisches Ambilight (Farb-Extraktion + Backdrop/Poster-Halo hinter der Top-Leiste + Helligkeits-Check) + 0,5s Crossfade
-            const ambiEl = document.getElementById("heroAmbilightEl");
-            if (ambiEl) {
-              ambiEl.style.setProperty("--hero-bg-landscape", backdropUrl ? ("url(" + backdropUrl + ")") : "none");
-              ambiEl.style.setProperty("--hero-bg-portrait", posterUrl ? ("url(" + posterUrl + ")") : "none");
-            }
-            if (backdropUrl) {
-              applyDynamicHeroAmbilightClient(backdropUrl);
+            const isTvDeviceHero = Boolean(document.body && document.body.dataset && document.body.dataset.device === "tv");
+            if (!isTvDeviceHero) {
+              const ambiEl = document.getElementById("heroAmbilightEl");
+              if (ambiEl) {
+                ambiEl.style.setProperty("--hero-bg-landscape", backdropUrl ? ("url(" + backdropUrl + ")") : "none");
+                ambiEl.style.setProperty("--hero-bg-portrait", posterUrl ? ("url(" + posterUrl + ")") : "none");
+              }
+              if (backdropUrl) {
+                applyDynamicHeroAmbilightClient(backdropUrl);
+              }
             }
             const activeLayer = layerA.classList.contains("active-layer") ? layerA : layerB;
             const nextLayer = activeLayer === layerA ? layerB : layerA;
@@ -3466,18 +3504,26 @@
             const nextArr = document.getElementById("heroNextArrowBtn");
             if (nextArr) nextArr.setAttribute("onclick", "setHeroSlideIndex(" + (state.heroIndex + 1) + ")");
 
-            // 3. Minimalistische Punktleiste + 7s-Fortschrittsbalken aktualisieren
+            // 3. Minimalistische Punktleiste + 7s-Fortschrittsbalken aktualisieren (nur beim aktiven Dot Reflow auslösen!)
             const allDots = container.querySelectorAll(".hero-dot");
+            let activeDotFill = null;
             allDots.forEach((btn, idx) => {
               const isAct = idx === state.heroIndex;
               btn.classList.toggle("active", isAct);
               const fill = btn.querySelector(".hero-thumb-progress-fill");
               if (fill) {
-                fill.style.animation = "none";
-                void fill.offsetWidth;
-                fill.style.animation = "";
+                if (isAct) {
+                  fill.style.animation = "none";
+                  activeDotFill = fill;
+                } else if (fill.style.animation) {
+                  fill.style.animation = "";
+                }
               }
             });
+            if (activeDotFill) {
+              void activeDotFill.offsetWidth;
+              activeDotFill.style.animation = "";
+            }
 
             scheduleHeroBackgroundVideoTeaserClient(false);
 
@@ -4034,6 +4080,9 @@
           const isAct = idx === activeAutocompleteIndex;
           el.classList.toggle("ac-kb-active", isAct);
           el.classList.toggle("spatial-focus", isAct);
+          if (isAct && typeof window._trackSpatialFocusEl === "function") {
+            window._trackSpatialFocusEl(el);
+          }
         });
         if (activeAutocompleteIndex >= 0 && items[activeAutocompleteIndex]) {
           const targetEl = items[activeAutocompleteIndex];
@@ -4212,7 +4261,7 @@
             const yr = (m.release_date || m.first_air_date || "").slice(0, 4);
             const thumbSrc = m.poster_path ? resolvePosterUrlClient(m.poster_path, "w92", "") : "";
             const thumbHtml = thumbSrc
-              ? '<img class="ac-item-thumb" src="' + esc(thumbSrc) + '" alt="" loading="lazy" />'
+              ? '<img class="ac-item-thumb" src="' + esc(thumbSrc) + '" alt="" loading="lazy" decoding="async" />'
               : '<span class="ac-item-icon-box">' + (tc === "s" ? "📺" : "🎬") + '</span>';
             const typeBadge = tc === "s" ? "Serie" : "Film";
             html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openDetails(\\'' + tc + '\\',' + Number(m.id) + ',false)">' +

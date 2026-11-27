@@ -13,7 +13,7 @@
           el.id = "subModalOverlayRoot";
           document.body.appendChild(el);
         }
-        if (!el.innerHTML.trim()) {
+        if (!el.firstElementChild) {
           const curEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : document.activeElement;
           if (curEl && curEl !== document.body && !el.contains(curEl)) {
             lastSubModalTriggerEl = curEl;
@@ -786,8 +786,9 @@
         const nextEp = (curIdx >= 0 && curIdx < cachedList.length - 1) ? cachedList[curIdx + 1] : null;
         const cachedEpObj = curIdx >= 0 ? cachedList[curIdx] : null;
 
+        const isTvEpStory = Boolean(document.body && document.body.dataset && document.body.dataset.device === "tv");
         const stillUrl = st.stillPath
-          ? ("https://image.tmdb.org/t/p/w780" + st.stillPath)
+          ? ("https://image.tmdb.org/t/p/" + (isTvEpStory ? "w500" : "w780") + st.stillPath)
           : (state.activeDetails?.backdropUrl || state.activeDetails?.posterUrl || "");
 
         const vipAllowed = isCurrentUserVip();
@@ -803,7 +804,7 @@
             '<div class="submodal-box" style="max-width:560px;padding:0;overflow:hidden">' +
               (stillUrl ? (
                 '<div style="position:relative;width:100%;height:175px;background:#050814;overflow:hidden;border-bottom:1px solid rgba(56,189,248,0.22)">' +
-                  '<img src="' + esc(stillUrl) + '" alt="' + esc(st.epName) + '" style="width:100%;height:100%;object-fit:cover;opacity:0.86" />' +
+                  '<img src="' + esc(stillUrl) + '" alt="' + esc(st.epName) + '" decoding="async" style="width:100%;height:100%;object-fit:cover;opacity:0.86" />' +
                   '<div style="position:absolute;inset:0;background:linear-gradient(to top, rgba(7,12,26,0.98) 4%, rgba(7,12,26,0.35) 55%, rgba(7,12,26,0.65) 100%)"></div>' +
                   '<div style="position:absolute;top:10px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:center;gap:8px">' +
                     '<span class="ep-code-badge" style="font-size:12px;padding:4px 10px;background:rgba(2,132,199,0.9);color:#fff">' + esc(epCode) + '</span>' +
@@ -881,31 +882,50 @@
         openEpisodeStory(sid, sn, en, epName);
       }
 
+      const clientEpisodeStoryCache = new Map();
+
       async function openEpisodeStory(seriesId, season, episode, epName = "") {
         setSeriesProgress(seriesId, season, episode, epName);
+        const epStoryCacheKey = String(Number(seriesId)) + ":" + String(Number(season)) + ":" + String(Number(episode));
+        const cachedStoryHit = clientEpisodeStoryCache.get(epStoryCacheKey);
+        const hasFreshStoryHit = Boolean(cachedStoryHit && (Date.now() - cachedStoryHit.ts) < 1800000);
         const cachedList = Array.isArray(activeSeasonCacheEpisodes) ? activeSeasonCacheEpisodes : [];
         const cachedEp = cachedList.find(e => Number(e.episode_number) === Number(episode)) || null;
         activeEpisodeStoryState = {
           seriesId: Number(seriesId),
           season: Number(season),
           episode: Number(episode),
-          epName: String(epName || cachedEp?.name || ("Folge " + episode)),
-          overview: String(cachedEp?.overview || ""),
-          airDate: String(cachedEp?.air_date || ""),
-          stillPath: String(cachedEp?.still_path || ""),
-          voteAverage: Number(cachedEp?.vote_average || 0),
-          runtime: Number(cachedEp?.runtime || 0),
-          telegraphUrl: "",
-          loading: true
+          epName: String((hasFreshStoryHit && cachedStoryHit.episode?.name) || epName || cachedEp?.name || ("Folge " + episode)),
+          overview: String((hasFreshStoryHit && cachedStoryHit.episode?.overview) || cachedEp?.overview || ""),
+          airDate: String((hasFreshStoryHit && cachedStoryHit.episode?.air_date) || cachedEp?.air_date || ""),
+          stillPath: String((hasFreshStoryHit && cachedStoryHit.episode?.still_path) || cachedEp?.still_path || ""),
+          voteAverage: Number((hasFreshStoryHit && cachedStoryHit.episode?.vote_average) || cachedEp?.vote_average || 0),
+          runtime: Number((hasFreshStoryHit && cachedStoryHit.episode?.runtime) || cachedEp?.runtime || 0),
+          telegraphUrl: String((hasFreshStoryHit && cachedStoryHit.telegraphUrl) || ""),
+          loading: !hasFreshStoryHit
         };
         renderEpisodeStoryModalDomClient();
         loadSeason(seriesId, season, false, true);
+        if (hasFreshStoryHit) {
+          return;
+        }
         try {
           const r = await apiFetchJson(API_BASE + "/episode-story", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ chatId, seriesId, season, episode })
           });
+          if (r && r.ok) {
+            if (clientEpisodeStoryCache.size >= 60) {
+              const oldestKey = clientEpisodeStoryCache.keys().next().value;
+              if (oldestKey !== undefined) clientEpisodeStoryCache.delete(oldestKey);
+            }
+            clientEpisodeStoryCache.set(epStoryCacheKey, {
+              ts: Date.now(),
+              telegraphUrl: r.telegraphUrl ? String(r.telegraphUrl) : "",
+              episode: r.episode || null
+            });
+          }
           if (
             activeEpisodeStoryState &&
             Number(activeEpisodeStoryState.seriesId) === Number(seriesId) &&
@@ -956,7 +976,7 @@
         if (!box) return;
         const targetRow = box.querySelector(".ep-row.ep-next-up, .ep-row.ep-watched");
         if (targetRow) {
-          try { targetRow.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_e) {}
+          try { targetRow.scrollIntoView({ behavior: typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth", block: "center" }); } catch (_e) {}
           const focusEl = targetRow.querySelector(".btn-stream-clean, .ep-title");
           if (focusEl && typeof jumpSpatialFocus === "function") {
             setTimeout(() => jumpSpatialFocus(focusEl, false), 120);
@@ -966,7 +986,15 @@
 
       async function toggleEpisodeSave(seriesId, season, episode) {
         if (!state.isAuthenticated) { openAccountModal(); return; }
-        await apiFetchJson(API_BASE + "/wishlist", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ chatId, action: "toggle_episode", seriesId, season, episode }) });
+        const r = await apiFetchJson(API_BASE + "/wishlist", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ chatId, action: "toggle_episode", seriesId, season, episode }) });
+        invalidateClientWishlistCache();
+        const epKey = "ep_" + seriesId + "_" + Number(season) + "_" + Number(episode);
+        if (r && r.saved === true) {
+          savedKeysSet.add(epKey);
+          savedKeysSet.add("s_" + seriesId);
+        } else if (r && r.saved === false) {
+          savedKeysSet.delete(epKey);
+        }
         loadSeason(seriesId, season, false, true);
       }
 
@@ -978,6 +1006,7 @@
         if (stickyBtn) stickyBtn.disabled = true;
         try {
           const r = await apiFetchJson(API_BASE + "/wishlist", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ chatId, action: "toggle_item", type, id }) });
+          invalidateClientWishlistCache();
           const isSaved = Boolean(r.saved);
           syncCardWishlistBadgeInDom(type, id, isSaved);
           if (state.activeDetails) state.activeDetails.isSaved = isSaved;
@@ -1059,11 +1088,12 @@
           showHudToast("⚠️ Konnte Eintrag nicht verschieben.");
           return;
         }
+        invalidateClientWishlistCache();
         const folders = state.cachedWishlistFolders || [];
         const fObj = folders.find(f => f.id === r.folderId);
         showHudToast("📁 Verschoben nach: " + (fObj ? fObj.name : "Standard-Merkliste"));
         closeSubModalOverlayClient();
-        loadWishlist(state.wlFolder);
+        loadWishlist(state.wlFolder, true);
       }
 
       function openWishlistFolderAssignPopupClient(uid, title, currentFolderId, isSer) {
@@ -1174,6 +1204,10 @@
         const countEl = document.getElementById("wishlistCountSpan");
         if (!mount) return;
         const folders = state.cachedWishlistFolders || [];
+        const folderByIdMap = new Map();
+        for (let fi = 0; fi < folders.length; fi++) {
+          if (folders[fi] && folders[fi].id) folderByIdMap.set(folders[fi].id, folders[fi]);
+        }
         const filteredItems = getFilteredAndSortedWishlistItems();
         if (countEl) countEl.textContent = String(filteredItems.length);
         if (filteredItems.length === 0) {
@@ -1203,7 +1237,7 @@
             const ratStr = it.rating ? Number(it.rating).toFixed(1) : '';
             const mediaLabel = isSer ? 'Serie' : 'Film';
             const epsList = Array.isArray(it.episodes) ? it.episodes : [];
-            const plObj = it.folderId ? folders.find(f => f.id === it.folderId) : null;
+            const plObj = it.folderId ? (folderByIdMap.get(it.folderId) || null) : null;
             const epCountBadgeHtml = (isSer && epsList.length > 0)
               ? ('<span class="card-type-badge" title="' + epsList.length + ' gespeicherte Folge(n) – Tipp für Liste" onclick="event.stopPropagation();setWishlistViewMode(\\'list\\')">📺 ' + epsList.length + ' Flg.</span>')
               : '';
@@ -1220,7 +1254,7 @@
                 '<button type="button" class="card-hover-play-btn" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ')" aria-label="Trailer abspielen" title="Instant-Trailer abspielen">' +
                   '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.2 2.6a.9.9 0 0 1 1.37-.77l8.2 5.4a.9.9 0 0 1 0 1.54l-8.2 5.4A.9.9 0 0 1 4.2 13.4V2.6z"/></svg>' +
                 '</button>' +
-                '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + wlPosterSrc + '" draggable="false" alt="' + itemTitleSafe + '" />' +
+                '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + wlPosterSrc + '" decoding="async" draggable="false" alt="' + itemTitleSafe + '" />' +
               '</div>' +
               '<div class="card-body">' +
                 '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
@@ -1238,7 +1272,7 @@
           const isSer = it.contentType === 'series' || isEp;
           const targetId = isEp ? it.seriesId : it.tmdbId;
           const badge = isEp ? '💿 Folge' : isSer ? '📺 Serie' : '🎬 Film';
-          const plObj = it.folderId ? folders.find(f => f.id === it.folderId) : null;
+          const plObj = it.folderId ? (folderByIdMap.get(it.folderId) || null) : null;
           const plTag = plObj ? ' <span style="color:var(--blue);font-size:10.5px">[' + esc(plObj.name) + ']</span>' : '';
           const thumbUrl = resolvePosterUrlClient(it.poster, 'w185', '');
           const epsList = Array.isArray(it.episodes) ? it.episodes : [];
@@ -1248,7 +1282,7 @@
             ? ('<button type="button" class="btn" style="padding:3px 8px;font-size:11px;background:rgba(56,189,248,0.14);border-color:rgba(56,189,248,0.45);color:var(--blue)" onclick="toggleSeriesEpisodesDrawerClient(event,\\'' + drawerId + '\\')">📺 ' + epsList.length + ' Folge' + (epsList.length === 1 ? '' : 'n') + ' (' + esc(epPreviewCodes) + (epsList.length > 3 ? '…' : '') + ') <span id="epDrawerIcon_' + drawerId + '">▾</span></button>')
             : '';
           const defaultFolderVal = isSer ? "cat_series" : "cat_movies";
-          const curFolderVal = (it.folderId && folders.some(f => f.id === it.folderId)) ? it.folderId : defaultFolderVal;
+          const curFolderVal = (it.folderId && folderByIdMap.has(it.folderId)) ? it.folderId : defaultFolderVal;
           const folderSelectHtml = folders.length > 0 ? (
             '<select class="mode-filter-select" style="padding:3px 7px;font-size:11px;max-width:155px" onchange="moveWishlistItemToFolderClient(\\'' + escJs(it.uid) + '\\',this.value)" title="In Playlist oder Ordner verschieben">' +
               '<option value="' + defaultFolderVal + '"' + (curFolderVal === defaultFolderVal ? ' selected' : '') + '>📁 Standard (' + (isSer ? 'Serien' : 'Filme') + ')</option>' +
@@ -1279,7 +1313,7 @@
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
               '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:180px;cursor:pointer" tabindex="0" onclick="openDetails(\\''+(isSer?'s':'m')+'\\','+targetId+',false)">' +
                 (thumbUrl
-                  ? '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(thumbUrl) + '" style="width:32px;height:46px;object-fit:cover;border-radius:4px;flex-shrink:0" alt="" />'
+                  ? '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(thumbUrl) + '" decoding="async" style="width:32px;height:46px;object-fit:cover;border-radius:4px;flex-shrink:0" alt="" />'
                   : '<div style="width:32px;height:46px;background:var(--card);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">' + (isSer ? '📺' : '🎬') + '</div>') +
                 '<div>' +
                   '<div style="font-size:12.5px;font-weight:800;color:var(--text)"><span style="color:var(--text-muted);font-size:11px;margin-right:6px">' + badge + '</span>' + esc(it.title) + (it.year && it.year !== 'K. A.' ? ' <span style="color:var(--text-muted);font-size:11px">(' + esc(it.year) + ')</span>' : '') + plTag + '</div>' +
@@ -1456,8 +1490,31 @@
         renderWishlistListItemsMountOnly();
       }
 
-      async function loadWishlist(folderFilter) {
-        if (document.getElementById("modalRoot")?.innerHTML) {
+      let wishlistCacheLoadedAt = 0;
+      let wishlistCacheChatId = "";
+      function isClientWishlistCacheFresh(cid) {
+        const curCid = String(cid !== undefined ? cid : (chatId || ""));
+        return Boolean(
+          curCid &&
+          wishlistCacheLoadedAt > 0 &&
+          wishlistCacheChatId === curCid &&
+          (Date.now() - wishlistCacheLoadedAt) < 120000
+        );
+      }
+      function markClientWishlistCacheFresh(cid) {
+        wishlistCacheLoadedAt = Date.now();
+        wishlistCacheChatId = String(cid !== undefined ? cid : (chatId || ""));
+      }
+      function invalidateClientWishlistCache() {
+        wishlistCacheLoadedAt = 0;
+        wishlistCacheChatId = "";
+      }
+      window.isClientWishlistCacheFresh = isClientWishlistCacheFresh;
+      window.markClientWishlistCacheFresh = markClientWishlistCacheFresh;
+      window.invalidateClientWishlistCache = invalidateClientWishlistCache;
+
+      async function loadWishlist(folderFilter, forceRefresh = false) {
+        if (document.getElementById("modalRoot")?.firstElementChild) {
           closeDetailModal();
         }
         if (folderFilter !== undefined) state.wlFolder = folderFilter;
@@ -1479,6 +1536,16 @@
           '</div>';
           return;
         }
+        const curCid = String(chatId || "");
+        if (
+          !forceRefresh &&
+          wishlistCacheLoadedAt > 0 &&
+          wishlistCacheChatId === curCid &&
+          (Date.now() - wishlistCacheLoadedAt) < 120000
+        ) {
+          renderWishlistViewDomOnly();
+          return;
+        }
         setBusyState(true, "💾 Lade Merkliste & Custom Playlisten...");
         try {
           const r = await apiFetchJson(API_BASE + "/wishlist");
@@ -1486,12 +1553,20 @@
           const folders = r.folders || [];
           state.cachedWishlistItems = allItems;
           state.cachedWishlistFolders = folders;
+          wishlistCacheLoadedAt = Date.now();
+          wishlistCacheChatId = curCid;
 
           savedKeysSet.clear();
           allItems.forEach(it => {
             if (it.contentType === "movie" && it.tmdbId) savedKeysSet.add("m_" + it.tmdbId);
             else if (it.contentType === "series" && it.tmdbId) savedKeysSet.add("s_" + it.tmdbId);
+            else if (it.contentType === "episode" && it.seriesId != null && it.seasonNumber != null && it.episodeNumber != null) {
+              savedKeysSet.add("ep_" + it.seriesId + "_" + Number(it.seasonNumber) + "_" + Number(it.episodeNumber));
+            }
           });
+          if (state.isAuthenticated && chatId && chatId !== "guest") {
+            savedKeysHydratedChatId = String(chatId);
+          }
 
           renderWishlistViewDomOnly();
         } finally {
@@ -1512,8 +1587,9 @@
           showHudToast("⚠️ " + (r?.error || "Konnte nicht erstellt werden."));
           return;
         }
+        invalidateClientWishlistCache();
         showHudToast("✅ " + (isPlaylist ? "Playlist" : "Ordner") + " „" + name.trim() + "“ erstellt");
-        loadWishlist(state.wlFolder);
+        loadWishlist(state.wlFolder, true);
       }
 
       async function togglePlaylistFolderTma(folderId) {
@@ -1527,7 +1603,8 @@
           showHudToast("⚠️ " + (r?.error || "Status konnte nicht geändert werden."));
           return;
         }
-        loadWishlist(state.wlFolder);
+        invalidateClientWishlistCache();
+        loadWishlist(state.wlFolder, true);
       }
 
       async function renamePlaylistFolderTma(folderId, currentName) {
@@ -1543,8 +1620,9 @@
           showHudToast("⚠️ " + (r?.error || "Umbenennen fehlgeschlagen."));
           return;
         }
+        invalidateClientWishlistCache();
         showHudToast("✅ Umbenannt in „" + nextName.trim() + "“");
-        loadWishlist(state.wlFolder);
+        loadWishlist(state.wlFolder, true);
       }
 
       async function deletePlaylistFolderTma(folderId, currentName) {
@@ -1561,8 +1639,9 @@
           return;
         }
         if (state.wlFolder === folderId) state.wlFolder = "root";
+        invalidateClientWishlistCache();
         showHudToast("🗑️ Playlist gelöscht");
-        loadWishlist(state.wlFolder);
+        loadWishlist(state.wlFolder, true);
       }
 
       async function deleteSavedUid(uid) {
@@ -1572,7 +1651,8 @@
           showHudToast("⚠️ " + (r?.error || "Eintrag konnte nicht entfernt werden."));
           return;
         }
-        loadWishlist(state.wlFolder);
+        invalidateClientWishlistCache();
+        loadWishlist(state.wlFolder, true);
       }
 
       let activeSettingsSectionTab = "general";

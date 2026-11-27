@@ -27,8 +27,22 @@
         loadDiscover(state.type || "m", state.genreId || "all", state.mode || "trend", state.sort || "default", false, false, 1);
       }
 
+      function closeDetailModalForViewNavigationClient() {
+        if (typeof stopDetailBackgroundVideoTeaserClient === "function") {
+          stopDetailBackgroundVideoTeaserClient();
+        }
+        if (typeof window.disconnectDetailBelowFoldObserverClient === "function") {
+          window.disconnectDetailBelowFoldObserverClient();
+        }
+        if (typeof activeDetailReqSeq === "number") activeDetailReqSeq++;
+        if (typeof activeSeasonReqSeq === "number") activeSeasonReqSeq++;
+        if (document.body) document.body.classList.remove("modal-open-pause-hero");
+        const m = document.getElementById("modalRoot");
+        if (m) m.innerHTML = "";
+      }
+
       async function openPersonView(personId, personName) {
-        document.getElementById("modalRoot").innerHTML = "";
+        closeDetailModalForViewNavigationClient();
         closeAutocomplete();
         state.isSearchMode = true;
         state.currentView = "person";
@@ -362,6 +376,8 @@
         try {
           const sp = new URLSearchParams(queryPart);
           if (stripChatId) sp.delete("chatId");
+          sp.delete("skipSaved");
+          sp.delete("skipSettings");
           const entries = [];
           sp.forEach((val, key) => {
             entries.push([key, val]);
@@ -568,6 +584,96 @@
         return Boolean(entry && entry.data && (Date.now() - Number(entry.ts || 0)) < ttl);
       }
 
+      const _pendingStorageCacheWrites = new Map();
+      let _storageCacheFlushScheduled = false;
+
+      function flushPendingStorageCacheWritesClient() {
+        _storageCacheFlushScheduled = false;
+        if (_pendingStorageCacheWrites.size === 0) return;
+        const batch = Array.from(_pendingStorageCacheWrites.values());
+        _pendingStorageCacheWrites.clear();
+        const now = Date.now();
+        let persistentIdx = null;
+        let persistentIdxDirty = false;
+
+        for (let i = 0; i < batch.length; i++) {
+          const item = batch[i];
+          if (!item || !item.entry) continue;
+          const { cacheKey, entry, urlStr } = item;
+          const u = String(urlStr || "");
+          const keyHash = hashBrowserCacheKeyClient(cacheKey);
+          if (isPersistentLocalStorageApiRouteClient(u)) {
+            try {
+              const serialized = JSON.stringify(entry);
+              if (serialized.length <= BROWSER_PERSISTENT_CACHE_MAX_BYTES) {
+                const lsKey = BROWSER_PERSISTENT_CACHE_PREFIX + keyHash;
+                const routePath = extractBrowserApiPathClient(u);
+                if (!persistentIdx) {
+                  persistentIdx = readPersistentCacheIndexClient().filter(it => {
+                    if (!it || !it.k) return false;
+                    if (it.exp && now > Number(it.exp)) {
+                      try { localStorage.removeItem(it.k); } catch (e) {}
+                      persistentIdxDirty = true;
+                      return false;
+                    }
+                    return true;
+                  });
+                }
+                persistentIdx = persistentIdx.filter(it => it && it.k !== lsKey);
+                while (persistentIdx.length >= BROWSER_PERSISTENT_CACHE_MAX_ENTRIES) {
+                  const evicted = persistentIdx.shift();
+                  if (evicted && evicted.k) {
+                    try { localStorage.removeItem(evicted.k); } catch (e) {}
+                  }
+                }
+                let stored = false;
+                try {
+                  localStorage.setItem(lsKey, serialized);
+                  stored = true;
+                } catch (quotaErr) {
+                  const evictCount = Math.max(8, Math.ceil(persistentIdx.length * 0.25));
+                  for (let j = 0; j < evictCount && persistentIdx.length > 0; j++) {
+                    const oldItem = persistentIdx.shift();
+                    if (oldItem && oldItem.k) {
+                      try { localStorage.removeItem(oldItem.k); } catch (e) {}
+                    }
+                  }
+                  persistentIdxDirty = true;
+                  try {
+                    localStorage.setItem(lsKey, serialized);
+                    stored = true;
+                  } catch (e2) {}
+                }
+                if (stored) {
+                  persistentIdx.push({ k: lsKey, ts: entry.ts || now, exp: entry.exp, r: routePath });
+                  persistentIdxDirty = true;
+                }
+              }
+            } catch (e) {}
+            continue;
+          }
+          if (isSessionStorageApiRouteClient(u)) {
+            try {
+              const ssKey = "tma_api_c_" + keyHash;
+              sessionStorage.setItem(ssKey, JSON.stringify(entry));
+            } catch (e) {}
+          }
+        }
+        if (persistentIdxDirty && persistentIdx) {
+          writePersistentCacheIndexClient(persistentIdx);
+        }
+      }
+
+      function schedulePendingStorageCacheFlushClient() {
+        if (_storageCacheFlushScheduled) return;
+        _storageCacheFlushScheduled = true;
+        if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(flushPendingStorageCacheWritesClient, { timeout: 1200 });
+        } else {
+          setTimeout(flushPendingStorageCacheWritesClient, 90);
+        }
+      }
+
       function writeBrowserApiCacheEntryClient(cacheKey, dataObj, urlStr) {
         if (!dataObj || dataObj.ok === false) return;
         const ttlMs = getBrowserApiCacheTtlMsClient(urlStr);
@@ -583,55 +689,9 @@
           memMap.set(cacheKey, entry);
         }
         const u = String(urlStr || "");
-        const keyHash = hashBrowserCacheKeyClient(cacheKey);
-        if (isPersistentLocalStorageApiRouteClient(u)) {
-          try {
-            const serialized = JSON.stringify(entry);
-            if (serialized.length <= BROWSER_PERSISTENT_CACHE_MAX_BYTES) {
-              const lsKey = BROWSER_PERSISTENT_CACHE_PREFIX + keyHash;
-              const routePath = extractBrowserApiPathClient(u);
-              let idx = readPersistentCacheIndexClient().filter(it => {
-                if (!it || !it.k) return false;
-                if (it.k === lsKey) return false;
-                if (it.exp && now > Number(it.exp)) {
-                  try { localStorage.removeItem(it.k); } catch (e) {}
-                  return false;
-                }
-                return true;
-              });
-              while (idx.length >= BROWSER_PERSISTENT_CACHE_MAX_ENTRIES) {
-                const evicted = idx.shift();
-                if (evicted && evicted.k) {
-                  try { localStorage.removeItem(evicted.k); } catch (e) {}
-                }
-              }
-              try {
-                localStorage.setItem(lsKey, serialized);
-              } catch (quotaErr) {
-                // Bei QuotaExceededError älteste 25% aus dem LRU-Index entfernen und einmal neu versuchen
-                const evictCount = Math.max(8, Math.ceil(idx.length * 0.25));
-                for (let j = 0; j < evictCount && idx.length > 0; j++) {
-                  const oldItem = idx.shift();
-                  if (oldItem && oldItem.k) {
-                    try { localStorage.removeItem(oldItem.k); } catch (e) {}
-                  }
-                }
-                try { localStorage.setItem(lsKey, serialized); } catch (e2) {
-                  writePersistentCacheIndexClient(idx);
-                  return;
-                }
-              }
-              idx.push({ k: lsKey, ts: now, exp: entry.exp, r: routePath });
-              writePersistentCacheIndexClient(idx);
-            }
-          } catch (e) {}
-          return;
-        }
-        if (isSessionStorageApiRouteClient(u)) {
-          try {
-            const ssKey = "tma_api_c_" + keyHash;
-            sessionStorage.setItem(ssKey, JSON.stringify(entry));
-          } catch (e) {}
+        if (isPersistentLocalStorageApiRouteClient(u) || isSessionStorageApiRouteClient(u)) {
+          _pendingStorageCacheWrites.set(cacheKey, { cacheKey, entry, urlStr: u });
+          schedulePendingStorageCacheFlushClient();
         }
       }
 
@@ -776,7 +836,7 @@
           }
         } else if (method !== "GET" && !isImportBatch && !isBackgroundImportAux) {
           // Gezielte Cache-Invalidierung bei Schreibzugriffen:
-          // - /wishlist -> invalidiert /wishlist, /discover?page=1 (savedKeys) sowie /details & /season (isSaved)
+          // - /wishlist -> invalidiert NUR /wishlist (Browser hält savedKeysSet lokal aktuell -> /discover, /details & /season bleiben gecacht!)
           // - /settings -> invalidiert nur filter-abhängige Routen (NICHT /details, /season, /logo, /logos, /translate!)
           // - /admin/* -> invalidiert Medien- & Admin-Caches (NICHT /logo, /logos, /translate)
           const isWishlistMut = urlStr.includes("/wishlist");
@@ -788,7 +848,6 @@
                 k.includes("/wishlist") ||
                 k.includes("/admin/overview") ||
                 k.includes("/admin/import-logs") ||
-                (isWishlistMut && (k.includes("/details") || k.includes("/season") || k.includes("/discover"))) ||
                 (isSettingsMut && (k.includes("/discover") || k.includes("/search") || k.includes("/collections") || k.includes("/universes") || k.includes("/similar") || k.includes("/settings"))) ||
                 (isAdminMut && (k.includes("/details") || k.includes("/season") || k.includes("/discover") || k.includes("/reports")));
               if (shouldEvictRam) {
@@ -796,7 +855,7 @@
               }
             }
           }
-          if (isWishlistMut || isAdminMut) {
+          if (isAdminMut) {
             clearPersistentBrowserApiCacheClient((routePath) => (
               routePath.endsWith("/details") || routePath.endsWith("/season") || routePath.endsWith("/discover")
             ));
@@ -810,13 +869,22 @@
             rawInitData = freshInit;
           }
         }
+        const cleanApiPath = urlStr.split("?")[0];
+        const isZeroAuthPublicRoute =
+          cleanApiPath.endsWith("/logo") ||
+          cleanApiPath.endsWith("/logos") ||
+          cleanApiPath.endsWith("/translate") ||
+          cleanApiPath.endsWith("/episode-story") ||
+          ((cleanApiPath.endsWith("/collections") || cleanApiPath.endsWith("/universes")) && !/[?&]id=/.test(urlStr));
         const isHeaderSafeStr = (v) => typeof v === "string" && v.length > 0 && !/[^\\x00-\\xFF]/.test(v);
-        if (isHeaderSafeStr(sessionToken)) headers["Authorization"] = "Bearer " + sessionToken;
-        if (isHeaderSafeStr(rawInitData)) headers["X-Telegram-Init-Data"] = rawInitData;
-        if (isHeaderSafeStr(rawLaunchToken)) {
-          headers["X-Telegram-Launch-Token"] = rawLaunchToken;
+        if (!isZeroAuthPublicRoute) {
+          if (isHeaderSafeStr(sessionToken)) headers["Authorization"] = "Bearer " + sessionToken;
+          if (isHeaderSafeStr(rawInitData)) headers["X-Telegram-Init-Data"] = rawInitData;
+          if (isHeaderSafeStr(rawLaunchToken)) {
+            headers["X-Telegram-Launch-Token"] = rawLaunchToken;
+          }
         }
-        if (isFilterDependentApiRouteClient(urlStr) && state.settings && Object.keys(state.settings).length > 0) {
+        if (!isZeroAuthPublicRoute && isFilterDependentApiRouteClient(urlStr) && state.settings && Object.keys(state.settings).length > 0) {
           try {
             const hdrFilterObj = {
               filtersActive: state.settings.filtersActive,
@@ -1296,7 +1364,7 @@
         triggerTmaHapticClient("medium");
         setBusyState(true, "🎲 Ziehe zufälligen " + (isMovie ? "Film" : "Serien-Tipp") + " mit deinen aktiven Filtern...");
         try {
-          const r = await apiFetchJson(API_BASE + "/discover?type=" + state.type + "&genreId=" + state.genreId + "&mode=random&bypass=1");
+          const r = await apiFetchJson(API_BASE + "/discover?type=" + state.type + "&genreId=" + state.genreId + "&mode=random&bypass=1&skipSaved=1&skipSettings=1");
           if (r.items && r.items.length > 0) {
             if (!Array.isArray(state.recentRandomKeys)) state.recentRandomKeys = [];
             const recentSet = new Set(state.recentRandomKeys);
@@ -1360,7 +1428,9 @@
         }
         const root = document.getElementById("appRoot");
         const companyQueryParam = state.currentCompanyId ? ("&companyId=" + encodeURIComponent(state.currentCompanyId)) : "";
-        const discoverUrl = API_BASE + "/discover?type=" + type + "&genreId=" + genreId + "&mode=" + mode + "&sort=" + sort + "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0") + companyQueryParam;
+        const skipDiscoverSavedParam = (pageNum === 1 && typeof isLocalSavedKeysHydratedClient === "function" && isLocalSavedKeysHydratedClient()) ? "&skipSaved=1" : "";
+        const skipDiscoverSettingsParam = (pageNum === 1 && typeof isLocalSettingsHydratedClient === "function" && isLocalSettingsHydratedClient()) ? "&skipSettings=1" : "";
+        const discoverUrl = API_BASE + "/discover?type=" + type + "&genreId=" + genreId + "&mode=" + mode + "&sort=" + sort + "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0") + companyQueryParam + skipDiscoverSavedParam + skipDiscoverSettingsParam;
         const isInstantFromCache = hasFreshBrowserApiCacheClient(discoverUrl);
         if (!isInstantFromCache) {
           const existingGrid = document.getElementById("resultsGridContainer");
@@ -1382,12 +1452,18 @@
             state.genres = type === "s" ? SERIES_GENRES_CLIENT : MOVIE_GENRES_CLIENT;
           }
           syncSearchGenreSelectDom();
-          if (Array.isArray(res.savedKeys)) {
+          if (Array.isArray(res.savedKeys) && !(typeof isLocalSavedKeysHydratedClient === "function" && isLocalSavedKeysHydratedClient())) {
             savedKeysSet = new Set(res.savedKeys);
+            if (state.isAuthenticated && chatId && chatId !== "guest") {
+              savedKeysHydratedChatId = String(chatId);
+            }
           }
           if (res.botUsername) state.botUsername = res.botUsername;
           if (res.settings) {
             state.settings = res.settings;
+            if (state.isAuthenticated && chatId && chatId !== "guest") {
+              settingsHydratedChatId = String(chatId);
+            }
             if (res.settings.uiScale && !localStorage.getItem("tma_ui_scale")) {
               uiScale = { ...DEFAULT_UI_SCALE, ...res.settings.uiScale };
               applyUiScaleToDom();
@@ -1623,7 +1699,7 @@
             '<button type="button" class="card-hover-play-btn" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ')" aria-label="Trailer abspielen" title="Instant-Trailer abspielen">' +
               '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.2 2.6a.9.9 0 0 1 1.37-.77l8.2 5.4a.9.9 0 0 1 0 1.54l-8.2 5.4A.9.9 0 0 1 4.2 13.4V2.6z"/></svg>' +
             '</button>' +
-            '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + effectivePosterSrc + '" data-page-num="' + itemPageNum + '"' + (idx < 8 ? ' fetchpriority="high"' : '') + ' draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
+            '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + effectivePosterSrc + '" data-page-num="' + itemPageNum + '"' + (idx < 8 ? ' fetchpriority="high"' : '') + ' decoding="async" draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
           '</div>' +
           '<div class="card-body">' +
             '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
@@ -2341,19 +2417,34 @@
         }
       }
 
+      let clientFranchisesHubCache = null;
+
       async function loadFranchisesHub(tab) {
         if (tab) state.franchiseTab = tab;
         state.currentView = "franchises";
         if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         const root = document.getElementById("appRoot");
-        setBusyState(true, "⏳ Lade Filmreihen & Filmuniversen...");
+        const hasCachedHub = Boolean(clientFranchisesHubCache && Array.isArray(clientFranchisesHubCache.cols) && Array.isArray(clientFranchisesHubCache.unis));
+        if (!hasCachedHub) {
+          setBusyState(true, "⏳ Lade Filmreihen & Filmuniversen...");
+        }
         try {
-          const [colsRes, unisRes] = await Promise.all([
-            apiFetchJson(API_BASE + "/collections"),
-            apiFetchJson(API_BASE + "/universes")
-          ]);
-          const cols = colsRes.collections || [];
-          const unis = unisRes.universes || [];
+          let cols;
+          let unis;
+          if (hasCachedHub) {
+            cols = clientFranchisesHubCache.cols;
+            unis = clientFranchisesHubCache.unis;
+          } else {
+            const [colsRes, unisRes] = await Promise.all([
+              apiFetchJson(API_BASE + "/collections"),
+              apiFetchJson(API_BASE + "/universes")
+            ]);
+            cols = colsRes.collections || [];
+            unis = unisRes.universes || [];
+            if (cols.length > 0 || unis.length > 0) {
+              clientFranchisesHubCache = { cols, unis };
+            }
+          }
           const isUni = state.franchiseTab === "universes";
 
           root.innerHTML = '<div class="section">' +
@@ -2414,12 +2505,14 @@
       }
 
       async function openCollectionView(colId, sortOverride = null) {
-        document.getElementById("modalRoot").innerHTML = "";
+        closeDetailModalForViewNavigationClient();
         const effSort = sortOverride || state.sort || "year_asc";
         if (sortOverride) state.sort = sortOverride;
-        setBusyState(true, "🍿 Lade Filmreihe...");
+        const colUrl = API_BASE + "/collections?id=" + encodeURIComponent(colId) + "&sort=" + encodeURIComponent(effSort);
+        const isInstantCol = typeof hasFreshBrowserApiCacheClient === "function" && hasFreshBrowserApiCacheClient(colUrl);
+        if (!isInstantCol) setBusyState(true, "🍿 Lade Filmreihe...");
         try {
-          const r = await apiFetchJson(API_BASE + "/collections?id=" + encodeURIComponent(colId) + "&sort=" + encodeURIComponent(effSort));
+          const r = await apiFetchJson(colUrl);
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "collection";
@@ -2432,17 +2525,19 @@
           renderDiscover("🍿 Filmreihe: " + (r.name || "Kollektion"));
           if (typeof focusFirstResultCard === "function") focusFirstResultCard(true);
         } finally {
-          setBusyState(false);
+          if (!isInstantCol) setBusyState(false);
         }
       }
 
       async function openUniverseView(uniId, sortOverride = null) {
-        document.getElementById("modalRoot").innerHTML = "";
+        closeDetailModalForViewNavigationClient();
         const effSort = sortOverride || state.sort || "year_asc";
         if (sortOverride) state.sort = sortOverride;
-        setBusyState(true, "🌌 Lade Filmuniversum...");
+        const uniUrl = API_BASE + "/universes?id=" + encodeURIComponent(uniId) + "&sort=" + encodeURIComponent(effSort);
+        const isInstantUni = typeof hasFreshBrowserApiCacheClient === "function" && hasFreshBrowserApiCacheClient(uniUrl);
+        if (!isInstantUni) setBusyState(true, "🌌 Lade Filmuniversum...");
         try {
-          const r = await apiFetchJson(API_BASE + "/universes?id=" + encodeURIComponent(uniId) + "&sort=" + encodeURIComponent(effSort));
+          const r = await apiFetchJson(uniUrl);
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "universe";
@@ -2455,7 +2550,7 @@
           renderDiscover((r.icon || "🌌") + " " + (r.name || "Filmuniversum"));
           if (typeof focusFirstResultCard === "function") focusFirstResultCard(true);
         } finally {
-          setBusyState(false);
+          if (!isInstantUni) setBusyState(false);
         }
       }
 
@@ -2473,6 +2568,7 @@
             })
           });
           if (r && r.ok) {
+            if (typeof window.invalidateClientWishlistCache === "function") window.invalidateClientWishlistCache();
             showHudToast("✅ " + (r.addedCount || 0) + " Filme in Ordner „" + (r.folderName || "") + "“ gespeichert!");
           } else {
             showHudToast("⚠️ " + (r?.error || "Speichern fehlgeschlagen."));
@@ -2500,10 +2596,16 @@
 
       function syncDetailCarouselSideButtonsClient(trackEl) {
         if (!trackEl) return;
-        const wrap = trackEl.closest ? trackEl.closest(".detail-carousel-wrap") : null;
-        if (!wrap) return;
-        const prevBtn = wrap.querySelector(".detail-carousel-side-btn.prev");
-        const nextBtn = wrap.querySelector(".detail-carousel-side-btn.next");
+        let prevBtn = trackEl._cachedCarouselPrevBtn;
+        let nextBtn = trackEl._cachedCarouselNextBtn;
+        if (prevBtn === undefined || nextBtn === undefined || (prevBtn && !prevBtn.isConnected)) {
+          const wrap = trackEl.closest ? trackEl.closest(".detail-carousel-wrap") : null;
+          if (!wrap) return;
+          prevBtn = wrap.querySelector(".detail-carousel-side-btn.prev");
+          nextBtn = wrap.querySelector(".detail-carousel-side-btn.next");
+          trackEl._cachedCarouselPrevBtn = prevBtn || null;
+          trackEl._cachedCarouselNextBtn = nextBtn || null;
+        }
         const maxScroll = Math.max(0, trackEl.scrollWidth - trackEl.clientWidth);
         if (prevBtn) {
           prevBtn.classList.toggle("is-edge-disabled", trackEl.scrollLeft <= 6);
@@ -2518,31 +2620,42 @@
         const el = document.getElementById(trackId);
         if (!el) return;
         const step = Math.max(260, Math.round(el.clientWidth * 0.76));
+        const scrollBeh = typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth";
         try {
-          el.scrollBy({ left: dir * step, behavior: "smooth" });
+          el.scrollBy({ left: dir * step, behavior: scrollBeh });
         } catch (_e) {
           el.scrollLeft += dir * step;
         }
-        setTimeout(() => syncDetailCarouselSideButtonsClient(el), 320);
+        setTimeout(() => syncDetailCarouselSideButtonsClient(el), scrollBeh === "auto" ? 30 : 320);
       }
 
       function initDetailHorizontalDragScrollClient(containerEl) {
         const root = containerEl || document.getElementById("modalRoot");
         if (!root) return;
+        const isTvCarousel = Boolean(document.body && document.body.dataset && document.body.dataset.device === "tv");
         const tracks = root.querySelectorAll(".detail-cast-track, .detail-similar-track");
         tracks.forEach(track => {
           syncDetailCarouselSideButtonsClient(track);
           setTimeout(() => syncDetailCarouselSideButtonsClient(track), 140);
           if (track._dragScrollBound) return;
           track._dragScrollBound = true;
+
+          let carouselScrollRafPending = false;
+          track.addEventListener("scroll", () => {
+            if (carouselScrollRafPending) return;
+            carouselScrollRafPending = true;
+            requestAnimationFrame(() => {
+              carouselScrollRafPending = false;
+              syncDetailCarouselSideButtonsClient(track);
+            });
+          }, { passive: true });
+
+          if (isTvCarousel) return;
+
           let isDown = false;
           let startX = 0;
           let scrollLeftStart = 0;
           let movedDist = 0;
-
-          track.addEventListener("scroll", () => {
-            syncDetailCarouselSideButtonsClient(track);
-          }, { passive: true });
 
           track.addEventListener("mousedown", (e) => {
             if (e.button !== 0) return;
@@ -2588,6 +2701,7 @@
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         const targetEl = document.getElementById(targetId) || document.getElementById("detailContentBodyEl");
         const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+        const scrollBeh = typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth";
         if (modalBackdrop && targetEl) {
           const backdropRect = modalBackdrop.getBoundingClientRect();
           const targetRect = targetEl.getBoundingClientRect();
@@ -2595,12 +2709,12 @@
           if (typeof animateContainerScrollTopSmoothClient === "function") {
             animateContainerScrollTopSmoothClient(modalBackdrop, Math.max(0, offsetTop), 380);
           } else {
-            modalBackdrop.scrollTo({ top: Math.max(0, offsetTop), behavior: "smooth" });
+            modalBackdrop.scrollTo({ top: Math.max(0, offsetTop), behavior: scrollBeh });
           }
           return;
         }
         if (targetEl && typeof targetEl.scrollIntoView === "function") {
-          targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+          targetEl.scrollIntoView({ behavior: scrollBeh, block: "start" });
         }
       }
 
@@ -4150,7 +4264,7 @@
           : extractCandidateKeysFromTrailersClient(state.activeDetails?.trailers);
         const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
         if (modalBackdrop && modalBackdrop.scrollTop > 4) {
-          modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
+          modalBackdrop.scrollTo({ top: 0, behavior: typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth" });
         }
         if (candidates.length === 0) {
           if (fromStageTap) {
@@ -4269,17 +4383,20 @@
         requestAnimationFrame(() => {
           detailModalScrollRafPending = false;
           const st = Number(scrollEl.scrollTop || 0);
-          const stageEl = document.getElementById("detailHeroStageEl");
-          if (stageEl) {
-            const pY = Math.min(180, Math.round(st * 0.32));
-            const pDim = st > 16 ? Math.min(0.86, (st / 460)).toFixed(2) : "0";
-            if (stageEl._lastPy !== pY) {
-              stageEl._lastPy = pY;
-              stageEl.style.setProperty("--detail-parallax-y", pY + "px");
-            }
-            if (stageEl._lastPdim !== pDim) {
-              stageEl._lastPdim = pDim;
-              stageEl.style.setProperty("--detail-scroll-dim", pDim);
+          const isTvLite = Boolean(document.body && document.body.getAttribute("data-device") === "tv");
+          if (!isTvLite) {
+            const stageEl = document.getElementById("detailHeroStageEl");
+            if (stageEl) {
+              const pY = Math.min(180, Math.round(st * 0.32));
+              const pDim = st > 16 ? Math.min(0.86, (st / 460)).toFixed(2) : "0";
+              if (stageEl._lastPy !== pY) {
+                stageEl._lastPy = pY;
+                stageEl.style.setProperty("--detail-parallax-y", pY + "px");
+              }
+              if (stageEl._lastPdim !== pDim) {
+                stageEl._lastPdim = pDim;
+                stageEl.style.setProperty("--detail-scroll-dim", pDim);
+              }
             }
           }
           const stickyHeader = document.getElementById("detailStickyMiniHeader");
@@ -4357,18 +4474,19 @@
           return;
         }
 
+        const isTvSpotlight = Boolean(document.body && document.body.getAttribute("data-device") === "tv");
         gridEl.innerHTML = filtered.slice(0, 24).map(it => {
           const tc = it.media_type === "tv" || it.type === "s" ? "s" : "m";
           const itemTitle = String(it.title || it.name || "Titel").trim();
           const isCur = state.activeDetails && String(state.activeDetails.id) === String(it.id);
           const fbSvg = buildPosterFallbackSvg(itemTitle, tc === "s");
-          const pUrl = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "") || fbSvg;
+          const pUrl = resolvePosterUrlClient(it.poster_path, isTvSpotlight ? "w185" : "w342", it.external_poster_url || it.poster || "") || fbSvg;
           const voteStr = it.vote_average ? ("★ " + Number(it.vote_average).toFixed(1)) : "";
           const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
           const subLine = [yearStr, voteStr, tc === "s" ? "Serie" : "Film"].filter(Boolean).join(" · ");
           return '<div class="detail-sim-card' + (isCur ? ' is-current-part' : '') + '" style="width:100%" tabindex="0" onclick="saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ');}">' +
             (isCur ? '<span class="detail-sim-current-badge">Aktuell</span>' : '') +
-            '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(pUrl) + '" alt="' + esc(itemTitle) + '" draggable="false" />' +
+            '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(pUrl) + '" alt="' + esc(itemTitle) + '" decoding="async" draggable="false" />' +
             '<div class="detail-sim-overlay">' +
               '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
               '<div class="detail-sim-sub">' + esc(subLine) + '</div>' +
@@ -4416,7 +4534,7 @@
           '<div class="person-spotlight-card" role="dialog" aria-label="' + esc(cleanName) + '">' +
             '<div class="person-spotlight-header">' +
               '<div class="person-spotlight-profile">' +
-                '<img id="personSpotlightAvatarEl" class="person-spotlight-avatar" src="' + esc(initialAvatar) + '" alt="' + esc(cleanName) + '" onerror="this.onerror=null;this.src=\\'' + escJs(fbAvatar) + '\\';" />' +
+                '<img id="personSpotlightAvatarEl" class="person-spotlight-avatar" src="' + esc(initialAvatar) + '" alt="' + esc(cleanName) + '" decoding="async" onerror="this.onerror=null;this.src=\\'' + escJs(fbAvatar) + '\\';" />' +
                 '<div>' +
                   '<h3 class="person-spotlight-name">' + esc(cleanName) + '</h3>' +
                   '<div id="personSpotlightSubEl" class="person-spotlight-sub">' + esc(subText) + '</div>' +
@@ -4442,11 +4560,28 @@
         '</div>';
 
         try {
-          const url = API_BASE + "/search?" +
-            (personId ? ("personId=" + encodeURIComponent(personId)) : "scope=person") +
-            "&q=" + encodeURIComponent(cleanName) +
-            "&bypass=1&sort=pop_desc";
-          const res = await apiFetchJson(url);
+          const pCacheKey = personId ? ("pid:" + Number(personId)) : ("pname:" + cleanName.toLowerCase());
+          const cachedP = (typeof window._clientPersonSpotlightCache !== "undefined")
+            ? window._clientPersonSpotlightCache.get(pCacheKey)
+            : null;
+          let res = null;
+          if (cachedP && (Date.now() - cachedP.ts) < 600000) {
+            res = cachedP.data;
+          } else {
+            const url = API_BASE + "/search?" +
+              (personId ? ("personId=" + encodeURIComponent(personId)) : "scope=person") +
+              "&q=" + encodeURIComponent(cleanName) +
+              "&bypass=1&sort=pop_desc";
+            res = await apiFetchJson(url);
+            if (res && res.ok !== false) {
+              if (!window._clientPersonSpotlightCache) window._clientPersonSpotlightCache = new Map();
+              if (window._clientPersonSpotlightCache.size >= 30) {
+                const oldestPk = window._clientPersonSpotlightCache.keys().next().value;
+                if (oldestPk !== undefined) window._clientPersonSpotlightCache.delete(oldestPk);
+              }
+              window._clientPersonSpotlightCache.set(pCacheKey, { ts: Date.now(), data: res });
+            }
+          }
           const gridEl = document.getElementById("personSpotlightGridEl");
           if (!gridEl) return;
           const pInfo = Array.isArray(res?.persons) && res.persons[0] ? res.persons[0] : null;
@@ -4485,11 +4620,13 @@
         if (!track) return;
         const onlyVipFlag = state.settings?.onlyVipStreams ? "1" : "0";
         try {
-          const r = await apiFetchJson(
-            API_BASE + "/similar?type=" + encodeURIComponent(type) +
-            "&id=" + encodeURIComponent(id) +
-            "&onlyVip=" + onlyVipFlag
-          );
+          const r = typeof fetchSimilarDedupClient === "function"
+            ? await fetchSimilarDedupClient(type, id, onlyVipFlag)
+            : await apiFetchJson(
+                API_BASE + "/similar?type=" + encodeURIComponent(type) +
+                "&id=" + encodeURIComponent(id) +
+                "&onlyVip=" + onlyVipFlag
+              );
           if (!state.activeDetails || String(state.activeDetails.id) !== String(id)) return;
           let items = Array.isArray(r?.items) ? r.items : [];
           if (state.settings?.onlyVipStreams) {
@@ -4500,17 +4637,19 @@
             return;
           }
           if (wrap) wrap.style.display = "flex";
+          const isTvSim = !!(document.body && document.body.dataset && document.body.dataset.device === "tv");
+          const simPosterSize = isTvSim ? "w185" : "w342";
           track.innerHTML = items.slice(0, 16).map(it => {
             const tc = it.media_type === "tv" ? "s" : (it.media_type === "movie" ? "m" : type);
             const itemTitle = String(it.title || it.name || "Titel").trim();
             const fbSvg = buildPosterFallbackSvg(itemTitle, tc === "s");
-            const simPoster = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "") || fbSvg;
+            const simPoster = resolvePosterUrlClient(it.poster_path, simPosterSize, it.external_poster_url || it.poster || "") || fbSvg;
             const voteStr = it.vote_average ? Number(it.vote_average).toFixed(1) : "";
             const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
             const typeWord = tc === "s" ? "Serie" : "Film";
             const subParts = [voteStr, yearStr, typeWord].filter(Boolean).join(" · ");
             return '<div class="detail-sim-card" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\'' + tc + '\\',' + Number(it.id) + ')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();openDetails(\\'' + tc + '\\',' + Number(it.id) + ');}">' +
-              '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(simPoster) + '" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
+              '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(simPoster) + '" decoding="async" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
               '<div class="detail-sim-overlay">' +
                 '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
                 '<div class="detail-sim-sub">' + esc(subParts) + '</div>' +
@@ -4526,15 +4665,39 @@
         }
       }
 
+      const clientCollectionDetailCache = new Map();
+      const clientCollectionDetailInflight = new Map();
+
       async function autoLoadCollectionInDetailClient(colId, currentMovieId) {
         const wrap = document.getElementById("detailCollectionSectionWrap");
         const track = document.getElementById("detailCollectionTrackEl");
         if (!track || !colId) return;
+        const colUrl = API_BASE + "/collections?id=" + encodeURIComponent(colId) + "&sort=year_asc";
+        const colCacheKey = (typeof buildBrowserApiCacheKeyClient === "function")
+          ? buildBrowserApiCacheKeyClient(colUrl)
+          : (String(colId) + "_" + (state.settings?.onlyVipStreams ? "vip" : "all"));
         try {
-          const r = await apiFetchJson(
-            API_BASE + "/collections?id=" + encodeURIComponent(colId) +
-            "&sort=year_asc"
-          );
+          let r = null;
+          const cachedCol = clientCollectionDetailCache.get(colCacheKey);
+          if (cachedCol && (Date.now() - cachedCol.ts) < 600000) {
+            r = cachedCol.data;
+          } else {
+            let p = clientCollectionDetailInflight.get(colCacheKey);
+            if (!p) {
+              p = apiFetchJson(colUrl).finally(() => {
+                clientCollectionDetailInflight.delete(colCacheKey);
+              });
+              clientCollectionDetailInflight.set(colCacheKey, p);
+            }
+            r = await p;
+            if (r && r.ok !== false && Array.isArray(r.items)) {
+              if (clientCollectionDetailCache.size >= 40) {
+                const oldestKey = clientCollectionDetailCache.keys().next().value;
+                if (oldestKey !== undefined) clientCollectionDetailCache.delete(oldestKey);
+              }
+              clientCollectionDetailCache.set(colCacheKey, { ts: Date.now(), data: r });
+            }
+          }
           if (!state.activeDetails || !state.activeDetails.collection || String(state.activeDetails.collection.id) !== String(colId)) return;
           const items = Array.isArray(r?.items) ? r.items : [];
           if (items.length <= 1) {
@@ -4542,18 +4705,20 @@
             return;
           }
           if (wrap) wrap.style.display = "flex";
+          const isTvCol = !!(document.body && document.body.dataset && document.body.dataset.device === "tv");
+          const colPosterSize = isTvCol ? "w185" : "w342";
           track.innerHTML = items.map(it => {
             const tc = it.media_type === "tv" ? "s" : "m";
             const itemTitle = String(it.title || it.name || "Titel").trim();
             const isCurPart = String(it.id) === String(currentMovieId);
             const fbSvg = buildPosterFallbackSvg(itemTitle, tc === "s");
-            const colPoster = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "") || fbSvg;
+            const colPoster = resolvePosterUrlClient(it.poster_path, colPosterSize, it.external_poster_url || it.poster || "") || fbSvg;
             const voteStr = it.vote_average ? ("★ " + Number(it.vote_average).toFixed(1)) : "";
             const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
             const subParts = [yearStr, voteStr].filter(Boolean).join(" · ");
             return '<div class="detail-sim-card' + (isCurPart ? ' is-current-part' : '') + '" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\'' + tc + '\\',' + Number(it.id) + ')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();openDetails(\\'' + tc + '\\',' + Number(it.id) + ');}">' +
               (isCurPart ? '<span class="detail-sim-current-badge">Aktuell</span>' : '') +
-              '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(colPoster) + '" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
+              '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(colPoster) + '" decoding="async" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
               '<div class="detail-sim-overlay">' +
                 '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
                 '<div class="detail-sim-sub">' + esc(subParts) + '</div>' +
@@ -4833,7 +4998,7 @@
           const movieFiles = getPlayableMovieFilesForHeroClient(d);
           if (movieFiles.length === 0) {
             const seasonSec = document.getElementById("detailStreamsSection");
-            if (seasonSec) seasonSec.scrollIntoView({ behavior: "smooth" });
+            if (seasonSec) seasonSec.scrollIntoView({ behavior: typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth" });
             return;
           }
           const idx = Math.max(0, Math.min(movieFiles.length - 1, Number(selectedVal) || 0));
@@ -4898,7 +5063,7 @@
           return;
         }
         const seasonBox = document.getElementById("seasonBox");
-        if (seasonBox) seasonBox.scrollIntoView({ behavior: "smooth" });
+        if (seasonBox) seasonBox.scrollIntoView({ behavior: typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth" });
       }
 
       function prepareDiscoverContextFromModal() {

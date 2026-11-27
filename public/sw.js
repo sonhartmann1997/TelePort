@@ -1,6 +1,8 @@
 const CACHE_NAME = "teleport-v4";
 const IMG_CACHE = "teleport-img-v2";
+const LOGO_CACHE = "teleport-logo-v1";
 const MAX_IMG = 150;
+const MAX_LOGOS = 120;
 const MAX_ASSETS = 24;
 const APP_SHELL = [
   "/app",
@@ -17,18 +19,40 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME && k !== IMG_CACHE).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k !== CACHE_NAME && k !== IMG_CACHE && k !== LOGO_CACHE).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
+
+const _swPutCounts = Object.create(null);
+const _swTrimInFlight = Object.create(null);
+const SW_TRIM_EVERY_N_PUTS = 15;
+
+async function trimCacheIfNeeded(cacheName, limit) {
+  if (_swTrimInFlight[cacheName]) return;
+  _swTrimInFlight[cacheName] = true;
+  try {
+    const cache = await caches.open(cacheName);
+    const keys = await cache.keys();
+    if (keys.length > limit) {
+      await Promise.all(keys.slice(0, keys.length - limit).map((k) => cache.delete(k)));
+    }
+  } catch (_e) {
+  } finally {
+    _swTrimInFlight[cacheName] = false;
+  }
+}
 
 async function putCapped(cacheName, req, res, limit) {
   try {
     const cache = await caches.open(cacheName);
     await cache.put(req, res);
-    const keys = await cache.keys();
-    if (keys.length > limit) {
-      await Promise.all(keys.slice(0, keys.length - limit).map((k) => cache.delete(k)));
+    const nextCount = (_swPutCounts[cacheName] || 0) + 1;
+    if (nextCount >= SW_TRIM_EVERY_N_PUTS) {
+      _swPutCounts[cacheName] = 0;
+      await trimCacheIfNeeded(cacheName, limit);
+    } else {
+      _swPutCounts[cacheName] = nextCount;
     }
   } catch (_e) {}
 }
@@ -95,6 +119,24 @@ self.addEventListener("fetch", (event) => {
           }).catch(() => cached || Response.error());
           return cached || fetchPromise;
         })
+      );
+      return;
+    }
+
+    // Statische Film-/Serien-Logos (/api/tma/logo & /api/tma/logos): Cache-First im Browser statt wiederholter Worker-Hits
+    if (url.pathname === "/api/tma/logo" || url.pathname === "/api/tma/logos") {
+      event.respondWith(
+        caches.open(LOGO_CACHE).then((cache) =>
+          cache.match(req).then((cached) => {
+            if (cached) return cached;
+            return fetch(req).then((networkRes) => {
+              if (networkRes && networkRes.status === 200) {
+                event.waitUntil(putCapped(LOGO_CACHE, req, networkRes.clone(), MAX_LOGOS));
+              }
+              return networkRes;
+            }).catch(() => Response.error());
+          })
+        )
       );
       return;
     }

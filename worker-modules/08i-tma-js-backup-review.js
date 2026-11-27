@@ -2134,87 +2134,110 @@
         }
       }
 
-      if (typeof window !== "undefined" && !window._adminGlobalDragListenersBound) {
-        window._adminGlobalDragListenersBound = true;
-        const extractClientPoint = (ev, fallbackX, fallbackY) => {
-          if (typeof ev.clientX === "number" && typeof ev.clientY === "number") {
-            return { x: ev.clientX, y: ev.clientY };
-          }
-          const t = (ev.touches && ev.touches[0]) || (ev.changedTouches && ev.changedTouches[0]);
-          if (t) return { x: t.clientX, y: t.clientY };
-          return { x: fallbackX, y: fallbackY };
-        };
-        const onMove = (ev) => {
-          if (!activeAdminDragState) return;
-          // Nur Events der aktiven Quelle/Pointer-ID verarbeiten (verhindert Doppel-Feuern von pointermove + mousemove + touchmove)
-          if (activeAdminDragState.source === "pointer") {
-            if (ev.type !== "pointermove") return;
-            if (activeAdminDragState.pointerId !== null && ev.pointerId !== undefined && ev.pointerId !== activeAdminDragState.pointerId) return;
-          } else if (activeAdminDragState.source === "mouse") {
-            if (ev.type !== "mousemove") return;
-            if (ev.buttons !== undefined && ev.buttons === 0) {
-              endGlobalAdminDrag();
-              return;
-            }
-          } else if (activeAdminDragState.source === "touch") {
-            if (ev.type !== "touchmove") return;
-            if (ev.cancelable) ev.preventDefault();
-          }
-          try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
-          const pt = extractClientPoint(ev, activeAdminDragState.startX, activeAdminDragState.startY);
-          const dx = pt.x - activeAdminDragState.startX;
-          const dy = pt.y - activeAdminDragState.startY;
-          const livePanel = (activeAdminDragState.panelId ? document.getElementById(activeAdminDragState.panelId) : null) || activeAdminDragState.panelEl;
-          if (livePanel) {
-            applyAdminPanelDragOffsetClient(livePanel, activeAdminDragState.baseX + dx, activeAdminDragState.baseY + dy);
-          }
-        };
-        const endGlobalAdminDrag = (ev) => {
-          if (!activeAdminDragState) return;
-          if (ev && activeAdminDragState.source === "pointer" && activeAdminDragState.pointerId !== null && ev.pointerId !== undefined && ev.pointerId !== activeAdminDragState.pointerId) {
+      const extractAdminDragClientPoint = (ev, fallbackX, fallbackY) => {
+        if (typeof ev.clientX === "number" && typeof ev.clientY === "number") {
+          return { x: ev.clientX, y: ev.clientY };
+        }
+        const t = (ev.touches && ev.touches[0]) || (ev.changedTouches && ev.changedTouches[0]);
+        if (t) return { x: t.clientX, y: t.clientY };
+        return { x: fallbackX, y: fallbackY };
+      };
+      const onGlobalAdminDragSelectStart = (ev) => {
+        if (activeAdminDragState && ev.cancelable) ev.preventDefault();
+      };
+      const onGlobalAdminDragMove = (ev) => {
+        if (!activeAdminDragState) return;
+        if (activeAdminDragState.source === "pointer") {
+          if (ev.type !== "pointermove") return;
+          if (activeAdminDragState.pointerId !== null && ev.pointerId !== undefined && ev.pointerId !== activeAdminDragState.pointerId) return;
+        } else if (activeAdminDragState.source === "mouse") {
+          if (ev.type !== "mousemove") return;
+          if (ev.buttons !== undefined && ev.buttons === 0) {
+            endGlobalAdminDragClient();
             return;
           }
-          const dragRef = activeAdminDragState;
-          activeAdminDragState = null;
-          const liveHandle = (dragRef.handleId ? document.getElementById(dragRef.handleId) : null) || dragRef.handleEl;
-          const livePanel = (dragRef.panelId ? document.getElementById(dragRef.panelId) : null) || dragRef.panelEl;
-          if (liveHandle) {
-            liveHandle.style.cursor = "grab";
-            if (dragRef.pointerId !== null && typeof liveHandle.releasePointerCapture === "function") {
-              try {
-                if (typeof liveHandle.hasPointerCapture !== "function" || liveHandle.hasPointerCapture(dragRef.pointerId)) {
-                  liveHandle.releasePointerCapture(dragRef.pointerId);
-                }
-              } catch (_e) {}
-            }
+        } else if (activeAdminDragState.source === "touch") {
+          if (ev.type !== "touchmove") return;
+          if (ev.cancelable) ev.preventDefault();
+        }
+        try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
+        const pt = extractAdminDragClientPoint(ev, activeAdminDragState.startX, activeAdminDragState.startY);
+        const dx = pt.x - activeAdminDragState.startX;
+        const dy = pt.y - activeAdminDragState.startY;
+        const livePanel = (activeAdminDragState.panelId ? document.getElementById(activeAdminDragState.panelId) : null) || activeAdminDragState.panelEl;
+        if (livePanel) {
+          applyAdminPanelDragOffsetClient(livePanel, activeAdminDragState.baseX + dx, activeAdminDragState.baseY + dy);
+        }
+      };
+      const onGlobalAdminDragBlur = () => endGlobalAdminDragClient(null);
+      const onGlobalAdminDragKeydown = (ev) => {
+        if (ev.key === "Escape" && activeAdminDragState) endGlobalAdminDragClient(null);
+      };
+      let adminDragActiveListenersAttached = false;
+      function attachActiveAdminDragListenersClient() {
+        if (typeof window === "undefined" || adminDragActiveListenersAttached) return;
+        adminDragActiveListenersAttached = true;
+        window.addEventListener("selectstart", onGlobalAdminDragSelectStart);
+        window.addEventListener("pointermove", onGlobalAdminDragMove, { passive: true });
+        window.addEventListener("mousemove", onGlobalAdminDragMove, { passive: true });
+        window.addEventListener("touchmove", onGlobalAdminDragMove, { passive: false });
+        window.addEventListener("pointerup", endGlobalAdminDragClient, { passive: true });
+        window.addEventListener("mouseup", endGlobalAdminDragClient, { passive: true });
+        window.addEventListener("touchend", endGlobalAdminDragClient, { passive: true });
+        window.addEventListener("touchcancel", endGlobalAdminDragClient, { passive: true });
+        window.addEventListener("pointercancel", endGlobalAdminDragClient, { passive: true });
+        window.addEventListener("blur", onGlobalAdminDragBlur, { passive: true });
+        window.addEventListener("keydown", onGlobalAdminDragKeydown);
+      }
+      function detachActiveAdminDragListenersClient() {
+        if (typeof window === "undefined" || !adminDragActiveListenersAttached) return;
+        adminDragActiveListenersAttached = false;
+        window.removeEventListener("selectstart", onGlobalAdminDragSelectStart);
+        window.removeEventListener("pointermove", onGlobalAdminDragMove);
+        window.removeEventListener("mousemove", onGlobalAdminDragMove);
+        window.removeEventListener("touchmove", onGlobalAdminDragMove);
+        window.removeEventListener("pointerup", endGlobalAdminDragClient);
+        window.removeEventListener("mouseup", endGlobalAdminDragClient);
+        window.removeEventListener("touchend", endGlobalAdminDragClient);
+        window.removeEventListener("touchcancel", endGlobalAdminDragClient);
+        window.removeEventListener("pointercancel", endGlobalAdminDragClient);
+        window.removeEventListener("blur", onGlobalAdminDragBlur);
+        window.removeEventListener("keydown", onGlobalAdminDragKeydown);
+      }
+      function endGlobalAdminDragClient(ev) {
+        if (!activeAdminDragState) {
+          detachActiveAdminDragListenersClient();
+          return;
+        }
+        if (ev && activeAdminDragState.source === "pointer" && activeAdminDragState.pointerId !== null && ev.pointerId !== undefined && ev.pointerId !== activeAdminDragState.pointerId) {
+          return;
+        }
+        const dragRef = activeAdminDragState;
+        activeAdminDragState = null;
+        detachActiveAdminDragListenersClient();
+        const liveHandle = (dragRef.handleId ? document.getElementById(dragRef.handleId) : null) || dragRef.handleEl;
+        const livePanel = (dragRef.panelId ? document.getElementById(dragRef.panelId) : null) || dragRef.panelEl;
+        if (liveHandle) {
+          liveHandle.style.cursor = "grab";
+          if (dragRef.pointerId !== null && typeof liveHandle.releasePointerCapture === "function") {
+            try {
+              if (typeof liveHandle.hasPointerCapture !== "function" || liveHandle.hasPointerCapture(dragRef.pointerId)) {
+                liveHandle.releasePointerCapture(dragRef.pointerId);
+              }
+            } catch (_e) {}
           }
-          if (livePanel) {
-            livePanel.classList.remove("admin-panel-dragging");
-          }
-          if (document.body) {
-            document.body.classList.remove("is-gesture-dragging");
-            document.body.style.userSelect = "";
-          }
-        };
-        window.addEventListener("selectstart", (ev) => {
-          if (activeAdminDragState && ev.cancelable) {
-            ev.preventDefault();
-          }
-        });
-        window.addEventListener("pointermove", onMove, { passive: true });
-        window.addEventListener("mousemove", onMove, { passive: true });
-        window.addEventListener("touchmove", onMove, { passive: false });
-        window.addEventListener("pointerup", endGlobalAdminDrag, { passive: true });
-        window.addEventListener("mouseup", endGlobalAdminDrag, { passive: true });
-        window.addEventListener("touchend", endGlobalAdminDrag, { passive: true });
-        window.addEventListener("touchcancel", endGlobalAdminDrag, { passive: true });
-        window.addEventListener("pointercancel", endGlobalAdminDrag, { passive: true });
-        window.addEventListener("blur", () => endGlobalAdminDrag(null), { passive: true });
-        window.addEventListener("keydown", (ev) => {
-          if (ev.key === "Escape" && activeAdminDragState) {
-            endGlobalAdminDrag(null);
-          }
-        });
+        }
+        if (livePanel) {
+          livePanel.classList.remove("admin-panel-dragging");
+        }
+        if (document.body) {
+          document.body.classList.remove("is-gesture-dragging");
+          document.body.style.userSelect = "";
+        }
+      }
+      function ensureAdminDragResizeListenerBoundClient() {
+        if (typeof window === "undefined" || window._adminGlobalDragResizeBound) return;
+        window._adminGlobalDragResizeBound = true;
         let _adminDragResizeTimer = null;
         window.addEventListener("resize", () => {
           if (_adminDragResizeTimer) clearTimeout(_adminDragResizeTimer);
@@ -2224,6 +2247,7 @@
 
       function bindDraggableAdminPanelClient(panelEl, handleEl) {
         if (!panelEl || !handleEl) return;
+        ensureAdminDragResizeListenerBoundClient();
         const key = panelEl.id || "default_admin_panel";
         const saved = adminPanelDragOffsets.get(key);
         if (saved && (saved.x !== 0 || saved.y !== 0)) {
@@ -2266,6 +2290,7 @@
             baseX: cur.x,
             baseY: cur.y
           };
+          attachActiveAdminDragListenersClient();
           handleEl.style.cursor = "grabbing";
           panelEl.classList.add("admin-panel-dragging");
           if (document.body) {
@@ -2281,13 +2306,7 @@
           handleEl.addEventListener("pointerdown", (ev) => startDrag(ev, "pointer"));
           handleEl.addEventListener("lostpointercapture", () => {
             if (activeAdminDragState && activeAdminDragState.handleEl === handleEl) {
-              handleEl.style.cursor = "grab";
-              panelEl.classList.remove("admin-panel-dragging");
-              if (document.body) {
-                document.body.classList.remove("is-gesture-dragging");
-                document.body.style.userSelect = "";
-              }
-              activeAdminDragState = null;
+              endGlobalAdminDragClient(null);
             }
           });
         } else {

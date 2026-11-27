@@ -15,14 +15,15 @@
         const m = document.getElementById("modalRoot");
         if (!m) return;
         const tr = d.trailers || null;
+        const isTvModeNow = typeof window.isCurrentDeviceTvModeClient === "function" && window.isCurrentDeviceTvModeClient();
         const posterOrig = resolvePosterUrlClient(d.poster_path, "original", d.external_poster_url || "");
-        const posterW780 = resolvePosterUrlClient(d.poster_path, "w780", d.external_poster_url || "");
+        const posterW780 = resolvePosterUrlClient(d.poster_path, isTvModeNow ? "w500" : "w780", d.external_poster_url || "");
         const posterThumb = resolvePosterUrlClient(d.poster_path, "w342", d.external_poster_url || "");
         if (posterThumb && !isSeedOnly) {
           syncCardPosterInDom(type, d.id || id, posterThumb);
         }
         const backdropOrig = resolvePosterUrlClient(d.backdrop_path, "original", "");
-        const backdropW1280 = resolvePosterUrlClient(d.backdrop_path, "w1280", posterW780 || posterOrig);
+        const backdropW1280 = resolvePosterUrlClient(d.backdrop_path, isTvModeNow ? "w780" : "w1280", posterW780 || posterOrig);
         const portraitBg = posterW780 || backdropW1280 || posterOrig;
         const ytSearchQuery = encodeURIComponent((d.title || "") + " " + (d.year && d.year !== "K.A." ? d.year : "") + " Trailer Deutsch");
         const ytSearchUrl = "https://www.youtube.com/results?search_query=" + ytSearchQuery;
@@ -224,11 +225,11 @@
                   const cName = String(c.name || "").trim();
                   const cRole = String(c.character || "Darsteller").trim();
                   const fbAvatar = buildActorAvatarFallbackSvgClient(cName);
-                  const photoUrl = c.profile_path ? resolvePosterUrlClient(c.profile_path, "w342", "") : fbAvatar;
+                  const photoUrl = c.profile_path ? resolvePosterUrlClient(c.profile_path, isTvModeNow ? "w185" : "w342", "") : fbAvatar;
                   const spotlightCall = 'openPersonSpotlightOverlayClient(' + (c.id ? Number(c.id) : 'null') + ',\\'' + escJs(cName) + '\\',\\'' + escJs(cRole) + '\\',\\'' + escJs(photoUrl) + '\\')';
                   return '<div class="detail-cast-card" tabindex="0" onclick="' + spotlightCall + '" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();' + spotlightCall + ';}" title="Spotlight & Filme mit ' + esc(cName) + ' anzeigen">' +
                     '<div class="detail-cast-photo-wrap">' +
-                      '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" draggable="false" onerror="this.onerror=null;this.src=\\'' + escJs(fbAvatar) + '\\';" />' +
+                      '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" decoding="async" draggable="false" onerror="this.onerror=null;this.src=\\'' + escJs(fbAvatar) + '\\';" />' +
                     '</div>' +
                     '<div class="detail-cast-info">' +
                       '<div class="detail-cast-name">' + esc(cName) + '</div>' +
@@ -244,7 +245,7 @@
 
         const bgVarsStyle =
           "--hero-bg-landscape:url('" + esc(backdropW1280 || portraitBg) + "');" +
-          "--hero-bg-portrait:url('" + esc(portraitBg || backdropW1280) + "');";
+          (isTvModeNow ? "--hero-bg-portrait:none;" : ("--hero-bg-portrait:url('" + esc(portraitBg || backdropW1280) + "');"));
 
         const collectionSectionHtml = (type === "m" && d.collection && d.collection.id) ? (
           '<section id="detailCollectionSectionWrap" class="detail-section-block" style="display:none">' +
@@ -289,7 +290,6 @@
           '<button type="button" id="modalMoreActionsBtn" class="detail-btn-glass" onclick="toggleModalMoreActions()" title="Teilen, Melden, Original-Poster, TMDb & weitere Werkzeuge">⋯ Mehr ▾</button>';
 
         const isInTelegramNow = typeof isRealTelegramMiniAppClient === "function" && isRealTelegramMiniAppClient();
-        const isTvModeNow = typeof window.isCurrentDeviceTvModeClient === "function" && window.isCurrentDeviceTvModeClient();
         const canShareToStoryNow = Boolean(
           isInTelegramNow &&
           window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.shareToStory === "function" &&
@@ -434,10 +434,7 @@
           initDetailHorizontalDragScrollClient(m);
           unlockCatalogCoversLoadingClient(false);
           observeLazyCoversInContainerClient(m);
-          if (type === "m" && d.collection && d.collection.id) {
-            autoLoadCollectionInDetailClient(d.collection.id, d.id || id);
-          }
-          autoLoadSimilarInDetailClient(type, d.id || id);
+          scheduleDetailBelowFoldLazyLoadClient(type, d.id || id, (type === "m" && d.collection && d.collection.id) ? d.collection.id : null);
           const pauseStreamBtn = document.getElementById("detailCinemaPauseStreamBtn");
           const endPrimaryBtn = document.getElementById("detailCinemaEndPrimaryBtn");
           const cinemaPrimaryHtml = (hasVipStreams ? CINEMA_ICONS_CLIENT.stream : CINEMA_ICONS_CLIENT.info) +
@@ -575,10 +572,7 @@
         observeLazyCoversInContainerClient(m);
 
         if (!isSeedOnly) {
-          if (type === "m" && d.collection && d.collection.id) {
-            autoLoadCollectionInDetailClient(d.collection.id, d.id || id);
-          }
-          autoLoadSimilarInDetailClient(type, d.id || id);
+          scheduleDetailBelowFoldLazyLoadClient(type, d.id || id, (type === "m" && d.collection && d.collection.id) ? d.collection.id : null);
           scheduleDetailBackgroundVideoTeaserClient(tr, autoOpenTrailer && !detailAutoOpenTrailerCancelled);
           if (type === "s") {
             loadSeason(d.id, initialSeason, false);
@@ -599,6 +593,68 @@
           : (m.querySelector("#detailPrimaryPlayBtn, #detailTrailerBtn, #modalWishlistBtn") || document.getElementById("topBarBackBtn"));
         if (initialFocusEl && typeof jumpSpatialFocus === "function") {
           jumpSpatialFocus(initialFocusEl, false);
+        }
+      }
+
+      let _detailBelowFoldObserver = null;
+      let _detailBelowFoldScrollCleanup = null;
+
+      function disconnectDetailBelowFoldObserverClient() {
+        if (_detailBelowFoldObserver) {
+          try { _detailBelowFoldObserver.disconnect(); } catch (_e) {}
+          _detailBelowFoldObserver = null;
+        }
+        if (_detailBelowFoldScrollCleanup) {
+          try { _detailBelowFoldScrollCleanup(); } catch (_e) {}
+          _detailBelowFoldScrollCleanup = null;
+        }
+      }
+      window.disconnectDetailBelowFoldObserverClient = disconnectDetailBelowFoldObserverClient;
+
+      function scheduleDetailBelowFoldLazyLoadClient(type, itemId, collectionId) {
+        disconnectDetailBelowFoldObserverClient();
+        const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+        const simWrap = document.getElementById("detailSimilarSectionWrap");
+        let fired = false;
+        const triggerBoth = () => {
+          if (fired) return;
+          fired = true;
+          disconnectDetailBelowFoldObserverClient();
+          if (!state.activeDetails || String(state.activeDetails.id) !== String(itemId)) return;
+          if (collectionId) {
+            autoLoadCollectionInDetailClient(collectionId, itemId);
+          }
+          autoLoadSimilarInDetailClient(type, itemId);
+        };
+        if (!modalBackdrop || !simWrap || typeof IntersectionObserver === "undefined") {
+          triggerBoth();
+          return;
+        }
+        if (modalBackdrop.scrollTop > 80) {
+          triggerBoth();
+          return;
+        }
+        const onModalScrollTrigger = () => {
+          if (modalBackdrop.scrollTop > 80) {
+            triggerBoth();
+          }
+        };
+        modalBackdrop.addEventListener("scroll", onModalScrollTrigger, { passive: true });
+        _detailBelowFoldScrollCleanup = () => {
+          modalBackdrop.removeEventListener("scroll", onModalScrollTrigger);
+        };
+        try {
+          _detailBelowFoldObserver = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting) {
+                triggerBoth();
+                break;
+              }
+            }
+          }, { root: modalBackdrop, rootMargin: "320px 0px" });
+          _detailBelowFoldObserver.observe(simWrap);
+        } catch (_e) {
+          triggerBoth();
         }
       }
 
@@ -649,12 +705,18 @@
         try {
           const d = hasValidCache
             ? cachedEntry.data
-            : await apiFetchJson(API_BASE + "/details?type=" + type + "&id=" + id);
+            : (typeof fetchMediaDetailsDedupClient === "function"
+                ? await fetchMediaDetailsDedupClient(type, id)
+                : await apiFetchJson(API_BASE + "/details?type=" + type + "&id=" + encodeURIComponent(id)));
           if (!d || d.ok === false) {
             throw new Error(d?.error || "Titeldetails konnten nicht geladen werden.");
           }
           if (!hasValidCache) {
-            clientDetailsCache.set(cacheKey, { data: d, ts: Date.now() });
+            if (typeof setLruMapEntryClient === "function") {
+              setLruMapEntryClient(clientDetailsCache, cacheKey, { data: d, ts: Date.now() }, CLIENT_DETAILS_CACHE_MAX);
+            } else {
+              clientDetailsCache.set(cacheKey, { data: d, ts: Date.now() });
+            }
           }
           // Race-Condition-Schutz: Falls inzwischen ein anderer Titel geöffnet oder das Modal geschlossen wurde, veraltete Antwort verwerfen
           if (reqSeq !== activeDetailReqSeq) {
@@ -664,6 +726,9 @@
             d._translatedOverviewDe = seedItem._translatedOverviewDe;
             d._showTranslatedOverviewDe = true;
             d._originalOverviewEn = seedItem._originalOverviewEn || d.overview || "";
+          }
+          if ((d.savedSkipped || (typeof isLocalSavedKeysHydratedClient === "function" && isLocalSavedKeysHydratedClient())) && typeof savedKeysSet !== "undefined") {
+            d.isSaved = savedKeysSet.has(type + "_" + (d.id || id));
           }
           state.activeDetails = { ...d, typeCode: type, id: d.id || id };
           if (d.botUsername) state.botUsername = d.botUsername;
@@ -1038,7 +1103,7 @@
         const moreBox = document.getElementById("modalMoreActionsBox");
         if (moreBox) moreBox.style.display = "none";
         box.style.display = "block";
-        setTimeout(() => { try { box.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_e) {} }, 40);
+        setTimeout(() => { try { box.scrollIntoView({ behavior: typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth", block: "nearest" }); } catch (_e) {} }, 40);
         box.innerHTML = '<div style="font-size:12px;color:#cbd5e1">⏳ Lade verfügbare Cover von TMDb (Original EN / DE / Textless), Apple iTunes DE & OMDb...</div>';
         try {
           const title = state.activeDetails?.title || "";
@@ -1143,7 +1208,7 @@
         const moreBox = document.getElementById("modalMoreActionsBox");
         if (moreBox) moreBox.style.display = "none";
         box.style.display = "block";
-        setTimeout(() => { try { box.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_e) {} }, 40);
+        setTimeout(() => { try { box.scrollIntoView({ behavior: typeof getSpatialScrollBehaviorClient === "function" ? getSpatialScrollBehaviorClient() : "smooth", block: "nearest" }); } catch (_e) {} }, 40);
         const d = state.activeDetails || {};
         const allFiles = (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
           ? d.allStreamFiles
@@ -1884,8 +1949,13 @@
                 r.snapshot.gauges.floodWait429?.active ||
                 Number(r.snapshot.gauges.singleChatPacing?.cooldownMs || 0) > 0
               ));
+            try {
+              if (hasActiveWork) sessionStorage.setItem("tma_antispam_pending", "1");
+              else sessionStorage.removeItem("tma_antispam_pending");
+            } catch (_ssErr) {}
             if (hasActiveWork) {
-              scheduleAntiSpamPollClient(1600);
+              const hiddenDelay = (typeof document !== "undefined" && document.hidden) ? 6000 : 1600;
+              scheduleAntiSpamPollClient(hiddenDelay);
             }
           }
         } catch (e) {}
@@ -2951,15 +3021,9 @@
           });
         }
         const vipAllowed = isCurrentUserVip();
-        const cacheKey = seriesId + "_" + parsedSeasonNum + "_" + (vipAllowed ? "vip" : "std");
-        const cachedEntry = !forceRefresh ? clientSeasonCache.get(cacheKey) : null;
-        const hasValidCache = Boolean(cachedEntry && (Date.now() - cachedEntry.ts < CLIENT_CACHE_TTL_MS));
-        const s = hasValidCache
-          ? cachedEntry.data
-          : await apiFetchJson(API_BASE + "/season?seriesId=" + seriesId + "&season=" + parsedSeasonNum);
-        if (!hasValidCache && s && s.ok !== false) {
-          clientSeasonCache.set(cacheKey, { data: s, ts: Date.now() });
-        }
+        const s = typeof fetchSeasonDedupClient === "function"
+          ? await fetchSeasonDedupClient(seriesId, parsedSeasonNum, forceRefresh)
+          : await apiFetchJson(API_BASE + "/season?seriesId=" + encodeURIComponent(seriesId) + "&season=" + encodeURIComponent(parsedSeasonNum));
         // Race-Condition-Schutz: Veraltete Staffel-Antwort verwerfen, falls inzwischen eine andere Staffel oder Serie geöffnet wurde
         if (seasonReqSeq !== activeSeasonReqSeq) return;
         if (state.activeDetails && String(state.activeDetails.id) !== String(seriesId)) return;
@@ -2967,7 +3031,15 @@
         const box = document.getElementById("seasonBox");
         if (!box) return;
         const maxAllowedEpisodes = Number(s.seasonEpisodeCount || 0);
-        const rawEpisodesArray = Array.isArray(s.episodes) ? s.episodes.map(ep => ({ ...ep })) : [];
+        const rawEpisodesArray = Array.isArray(s.episodes)
+          ? s.episodes.map(ep => {
+              const copy = { ...ep };
+              if ((s.savedSkipped || (typeof isLocalSavedKeysHydratedClient === "function" && isLocalSavedKeysHydratedClient())) && typeof savedKeysSet !== "undefined") {
+                copy.isSaved = savedKeysSet.has("ep_" + seriesId + "_" + parsedSeasonNum + "_" + Number(ep.episode_number));
+              }
+              return copy;
+            })
+          : [];
 
         // Smart Auto-Fill Ergänzung: Falls in allStreamFiles der Serie für diese Staffel Folgen vorliegen, die in ep.files fehlen, automatisch zusammenführen
         if (vipAllowed && Array.isArray(state.activeDetails?.allStreamFiles)) {

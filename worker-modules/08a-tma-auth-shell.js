@@ -393,6 +393,27 @@
     return generated;
   }
 
+  const tmaHmacKeyCache = new Map();
+  const tmaVerifiedTokenCache = new Map();
+  const TMA_VERIFIED_TOKEN_CACHE_TTL_MS = 60000;
+  const TMA_VERIFIED_TOKEN_CACHE_MAX = 256;
+
+  async function getCachedHmacSignKey(secret) {
+    const keyStr = String(secret || "");
+    const existing = tmaHmacKeyCache.get(keyStr);
+    if (existing) return existing;
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(keyStr),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    if (tmaHmacKeyCache.size >= 16) tmaHmacKeyCache.clear();
+    tmaHmacKeyCache.set(keyStr, key);
+    return key;
+  }
+
   async function signTmaSessionToken(payload, env) {
     const enc = new TextEncoder();
     const dataObj = {
@@ -403,13 +424,7 @@
     const jsonBytes = enc.encode(JSON.stringify(dataObj));
     const payloadHex = bytesToHex(jsonBytes);
     const signingSecret = await getSessionSigningSecret(env);
-    const key = await crypto.subtle.importKey(
-      "raw",
-      enc.encode(signingSecret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
+    const key = await getCachedHmacSignKey(signingSecret);
     const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(payloadHex));
     return `${payloadHex}.${bytesToHex(sigBuf)}`;
   }
@@ -434,20 +449,25 @@
   async function verifyTmaSessionToken(token, env) {
     if (!token || typeof token !== "string" || !token.includes(".")) return null;
     try {
+      const now = Date.now();
+      const secrets = await getVerificationSigningSecrets(env);
+      const cacheKey = `${String(secrets[0] || "").slice(0, 8)}:${token}`;
+      const cachedEntry = tmaVerifiedTokenCache.get(cacheKey);
+      if (cachedEntry) {
+        if ((now - cachedEntry.cachedAt) < TMA_VERIFIED_TOKEN_CACHE_TTL_MS && (!cachedEntry.data.exp || now <= Number(cachedEntry.data.exp))) {
+          return cachedEntry.data;
+        }
+        tmaVerifiedTokenCache.delete(cacheKey);
+      }
+
       const [payloadHex, sigHex] = token.split(".");
       if (!payloadHex || !sigHex) return null;
       const enc = new TextEncoder();
-      const secrets = await getVerificationSigningSecrets(env);
+      const payloadBytes = enc.encode(payloadHex);
       let signatureValid = false;
       for (const signingSecret of secrets) {
-        const key = await crypto.subtle.importKey(
-          "raw",
-          enc.encode(signingSecret),
-          { name: "HMAC", hash: "SHA-256" },
-          false,
-          ["sign"]
-        );
-        const expectedSigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(payloadHex));
+        const key = await getCachedHmacSignKey(signingSecret);
+        const expectedSigBuf = await crypto.subtle.sign("HMAC", key, payloadBytes);
         const expectedSigHex = bytesToHex(expectedSigBuf);
         if (timingSafeEqualStr(expectedSigHex.toLowerCase(), sigHex.toLowerCase())) {
           signatureValid = true;
@@ -458,7 +478,13 @@
 
       const jsonStr = new TextDecoder().decode(hexToBytes(payloadHex));
       const data = JSON.parse(jsonStr);
-      if (!data || !data.telegramId || (data.exp && Date.now() > Number(data.exp))) return null;
+      if (!data || !data.telegramId || (data.exp && now > Number(data.exp))) return null;
+
+      if (tmaVerifiedTokenCache.size >= TMA_VERIFIED_TOKEN_CACHE_MAX) {
+        const oldestKey = tmaVerifiedTokenCache.keys().next().value;
+        if (oldestKey !== undefined) tmaVerifiedTokenCache.delete(oldestKey);
+      }
+      tmaVerifiedTokenCache.set(cacheKey, { data, cachedAt: now });
       return data;
     } catch (e) {
       return null;
@@ -719,8 +745,10 @@
     <link rel="apple-touch-icon" href="/favicon.svg" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='28' y2='28' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0%25' stop-color='%2338bdf8'/%3E%3Cstop offset='50%25' stop-color='%23a855f7'/%3E%3Cstop offset='100%25' stop-color='%236366f1'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='11.5' stroke='url(%23g)' stroke-width='2.6' stroke-dasharray='18 5'/%3E%3Ccircle cx='14' cy='14' r='7.5' stroke='%2338bdf8' stroke-width='1.5' stroke-opacity='0.8'/%3E%3Cpath d='M11.8 9.8L18.5 14L11.8 18.2V9.8Z' fill='url(%23g)'/%3E%3C/svg%3E" />
     <link rel="alternate icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://image.tmdb.org" crossorigin />
+    <link rel="dns-prefetch" href="https://image.tmdb.org" />
     <title>TelePort – Film & Serien Mini-App</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script defer src="https://telegram.org/js/telegram-web-app.js"></script>
     <!-- @TMA_STATIC_CSS_START -->
     <style>
       :root {
@@ -1330,15 +1358,20 @@
         color: #0f172a;
       }
       body[data-theme="light"] .sort-select:hover,
-      body[data-theme="light"] .sort-select.spatial-focus,
       body[data-theme="light"] .mode-filter-select:hover,
-      body[data-theme="light"] .mode-filter-select.spatial-focus,
       body[data-theme="light"] .mode-filter-select.active-mode,
       body[data-theme="light"] .new-filter-select:hover,
-      body[data-theme="light"] .new-filter-select.spatial-focus,
       body[data-theme="light"] .new-filter-select.active-new {
         background-color: #e0f2fe;
         border-color: #0284c7;
+        color: #0c4a6e;
+      }
+      body[data-theme="light"] .sort-select.spatial-focus,
+      body[data-theme="light"] .mode-filter-select.spatial-focus,
+      body[data-theme="light"] .new-filter-select.spatial-focus {
+        background-color: #bae6fd;
+        border-color: #0284c7;
+        box-shadow: 0 0 0 2.5px #0284c7, 0 0 12px rgba(2, 132, 199, 0.35);
         color: #0c4a6e;
       }
       body[data-theme="light"] .hero {
@@ -3079,6 +3112,8 @@
         background: rgba(15, 23, 42, 0.52);
         border: 1px solid rgba(255, 255, 255, 0.10);
         cursor: pointer;
+        content-visibility: auto;
+        contain-intrinsic-size: auto 66px;
         transition: background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
       }
       .rm-entry-card.spatial-focus {
